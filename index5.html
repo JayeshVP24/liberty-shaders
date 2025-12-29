@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Halftone Shader</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        line-height: 1.4;
+        background: #0a0a0a;
+        color: #e0e0e0;
+      }
+
+      .section {
+        padding: 80px 24px;
+        max-width: 980px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        color: #fff;
+      }
+
+      .spacer {
+        height: 60vh;
+        background: linear-gradient(to bottom, #111, #0a0a0a);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 1.2rem;
+      }
+
+      /* Shader container */
+      [shader="pixel"] {
+        position: relative;
+        width: min(900px, 100%);
+        height: 500px;
+        margin: 24px auto;
+        border-radius: 18px;
+        overflow: hidden;
+        background: #1a1a1a;
+      }
+
+      /* Canvas will be positioned absolutely */
+      [shader="pixel"] canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      /* Hide the source video */
+      [shader="pixel"] video {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .label {
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: #fff;
+      }
+
+      .hint {
+        color: #888;
+        font-size: 14px;
+      }
+
+      .controls {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+
+      .controls button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 8px;
+        background: #333;
+        color: #fff;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+      }
+
+      .controls button:hover {
+        background: #444;
+      }
+
+      .controls button.active {
+        background: #0066ff;
+      }
+
+      .slider-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .slider-group label {
+        min-width: 80px;
+        font-size: 13px;
+        color: #aaa;
+      }
+
+      .slider-group input[type="range"] {
+        width: 150px;
+        accent-color: #0066ff;
+      }
+
+      .slider-value {
+        min-width: 40px;
+        font-size: 13px;
+        color: #666;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="section">
+      <h1>🎬 Halftone Shader on Video</h1>
+      <p class="hint">
+        Native WebGL2 implementation with direct video texture support.
+        <br>The video texture is updated every frame using texImage2D.
+      </p>
+    </div>
+
+    <div class="spacer">Scroll ⬇️</div>
+
+    <!-- ========== IMAGE SHADER (Library) ========== -->
+    <div class="section">
+      <div class="label">📷 Image Shader (using @paper-design/shaders library)</div>
+      <p class="hint">Original library implementation with manual dot size control</p>
+
+      <div shader="pixel" shader-type="image" id="image-shader">
+        <img
+          crossorigin="anonymous"
+          src="https://picsum.photos/id/1039/1400/900"
+          alt="Image shader"
+        />
+      </div>
+
+      <!-- Image controls -->
+      <div class="controls">
+        <div class="slider-group">
+          <label>Dot Size:</label>
+          <input type="range" id="image-size-slider" min="0.1" max="2" step="0.05" value="0.6">
+          <span class="slider-value" id="image-size-value">0.60</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="spacer">Keep scrolling ⬇️</div>
+
+    <!-- ========== VIDEO SHADER (Custom WebGL2) ========== -->
+    <div class="section">
+      <div class="label">🎥 Video Halftone Shader (Custom WebGL2)</div>
+      <p class="hint">Native WebGL2 with direct video texture support - animates on scroll</p>
+
+      <div shader="pixel" shader-type="video" id="video-shader">
+        <video
+          crossorigin="anonymous"
+          src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+          muted
+          loop
+          playsinline
+        ></video>
+      </div>
+
+      <!-- Video controls -->
+      <div class="controls">
+        <button id="play-btn" class="active">▶ Play</button>
+        <button id="pause-btn">⏸ Pause</button>
+        
+        <div class="slider-group">
+          <label>Dot Size:</label>
+          <input type="range" id="size-slider" min="0.1" max="2" step="0.05" value="1.0">
+          <span class="slider-value" id="size-value">1.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="spacer">End ✅</div>
+
+    <script type="module">
+      import { animate } from "https://esm.sh/motion@12.23.26";
+      import {
+        ShaderMount,
+        HalftoneDotsGrids,
+        HalftoneDotsTypes,
+        ShaderFitOptions,
+        getShaderColorFromString,
+        halftoneDotsFragmentShader,
+        defaultObjectSizing
+      } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+      // ============================================
+      // IMAGE SHADER (Library Implementation)
+      // ============================================
+      const imageContainer = document.querySelector('#image-shader');
+      const imageEl = imageContainer.querySelector('img');
+      
+      let imageShader;
+      
+      // Wait for image to load
+      if (imageEl.complete) {
+        initImageShader();
+      } else {
+        imageEl.addEventListener('load', initImageShader);
+      }
+      
+      async function initImageShader() {
+        imageEl.style.opacity = "0";
+        imageEl.style.pointerEvents = "none";
+        
+        const preset = {
+          ...defaultObjectSizing,
+          fit: "cover",
+          speed: 0,
+          frame: 0,
+          colorBack: "#ffffff",
+          colorFront: "#b2aeae",
+          size: 0.6,
+          radius: 2,
+          contrast: 0.01,
+          originalColors: true,
+          inverted: false,
+          grainMixer: 0,
+          grainOverlay: 0,
+          grainSize: 0.5,
+          grid: "square",
+          type: "holes"
+        };
+        
+        // Process image for uniforms
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = imageEl.src;
+        });
+        
+        const uniforms = {
+          u_image: img,
+          u_size: preset.size,
+          u_radius: preset.radius,
+          u_contrast: preset.contrast,
+          u_originalColors: preset.originalColors,
+          u_inverted: preset.inverted,
+          u_grainMixer: preset.grainMixer,
+          u_grainOverlay: preset.grainOverlay,
+          u_grainSize: preset.grainSize,
+          u_rotation: preset.rotation,
+          u_scale: preset.scale,
+          u_offsetX: preset.offsetX,
+          u_offsetY: preset.offsetY,
+          u_originX: preset.originX,
+          u_originY: preset.originY,
+          u_worldWidth: preset.worldWidth,
+          u_worldHeight: preset.worldHeight,
+          u_colorFront: getShaderColorFromString(preset.colorFront),
+          u_colorBack: getShaderColorFromString(preset.colorBack),
+          u_grid: HalftoneDotsGrids[preset.grid],
+          u_type: HalftoneDotsTypes[preset.type],
+          u_fit: ShaderFitOptions[preset.fit]
+        };
+        
+        imageShader = new ShaderMount(
+          imageContainer,
+          halftoneDotsFragmentShader,
+          uniforms,
+          {},
+          preset.speed,
+          preset.frame,
+          preset.minPixelRatio,
+          preset.maxPixelCount,
+          preset.mipmaps
+        );
+        
+        console.log('Image shader initialized');
+      }
+      
+      // Image controls
+      const imageSizeSlider = document.getElementById('image-size-slider');
+      const imageSizeValue = document.getElementById('image-size-value');
+      
+      imageSizeSlider.addEventListener('input', (e) => {
+        const size = parseFloat(e.target.value);
+        imageSizeValue.textContent = size.toFixed(2);
+        if (imageShader) {
+          imageShader.setUniforms({ u_size: size });
+        }
+      });
+
+      // ============================================
+      // CUSTOM VIDEO SHADER CLASS
+      // ============================================
+      class VideoShader {
+        constructor(container, video) {
+          this.container = container;
+          this.video = video;
+          this.isPlaying = false;
+          this.animationId = null;
+          
+          // Create canvas
+          this.canvas = document.createElement('canvas');
+          this.container.appendChild(this.canvas);
+          
+          // Get WebGL2 context
+          this.gl = this.canvas.getContext('webgl2', {
+            alpha: true,
+            premultipliedAlpha: false
+          });
+          
+          if (!this.gl) {
+            throw new Error('WebGL2 not supported');
+          }
+          
+          // Shader uniforms (will be set later)
+          this.uniforms = {
+            u_size: 1.0,
+            u_radius: 2.0,
+            u_contrast: 0.01
+          };
+          
+          // Initialize WebGL
+          this.initShaders();
+          this.setupGeometry();
+          this.createTexture();
+          this.setupResize();
+          
+          // Initial render
+          this.resize();
+          this.render();
+        }
+        
+        initShaders() {
+          const gl = this.gl;
+          
+          // Vertex shader - simple passthrough
+          const vertexShaderSource = `#version 300 es
+            in vec2 a_position;
+            out vec2 v_texCoord;
+            
+            void main() {
+              gl_Position = vec4(a_position, 0.0, 1.0);
+              v_texCoord = a_position * 0.5 + 0.5;
+              v_texCoord.y = 1.0 - v_texCoord.y;
+            }
+          `;
+          
+          // Fragment shader - halftone effect
+          const fragmentShaderSource = `#version 300 es
+            precision highp float;
+            
+            in vec2 v_texCoord;
+            out vec4 fragColor;
+            
+            uniform sampler2D u_image;
+            uniform vec2 u_resolution;
+            uniform float u_size;
+            uniform float u_radius;
+            uniform float u_contrast;
+            
+            const float PI = 3.14159265358979323846;
+            
+            float sigmoid(float x, float k) {
+              return 1.0 / (1.0 + exp(-k * (x - 0.5)));
+            }
+            
+            float getCircleWithHole(vec2 uv, float r, float baseR) {
+              float d = length(uv - 0.5);
+              float aa = fwidth(d);
+              
+              r = mix(0.75 * baseR, 0.0, r);
+              float rMod = mod(r, 0.5);
+              
+              float circle = 1.0 - smoothstep(rMod - aa, rMod + aa, d);
+              
+              if (r < 0.5) {
+                return circle;
+              } else {
+                float insideX = step(0.0, uv.x) * (1.0 - step(1.0, uv.x));
+                float insideY = step(0.0, uv.y) * (1.0 - step(1.0, uv.y));
+                float cell = insideX * insideY;
+                return cell - circle;
+              }
+            }
+            
+            void main() {
+              // Sample the video texture
+              vec4 texColor = texture(u_image, v_texCoord);
+              
+              // Convert to luminance with contrast adjustment
+              vec3 color = vec3(
+                sigmoid(texColor.r, u_contrast),
+                sigmoid(texColor.g, u_contrast),
+                sigmoid(texColor.b, u_contrast)
+              );
+              float lum = dot(vec3(0.2126, 0.7152, 0.0722), color);
+              
+              // Create halftone grid
+              float cellsPerSide = mix(300.0, 7.0, pow(u_size, 0.7));
+              float cellSize = 1.0 / cellsPerSide;
+              
+              // Calculate pixel ratio
+              float aspectRatio = u_resolution.x / u_resolution.y;
+              vec2 pad = cellSize * vec2(1.0 / aspectRatio, 1.0);
+              
+              // Create UV for pattern
+              vec2 uv = v_texCoord;
+              uv -= vec2(0.5);
+              uv /= pad;
+              
+              vec2 uv_f = fract(uv);
+              
+              // Create halftone dot based on luminance
+              float baseRadius = u_radius;
+              float shape = getCircleWithHole(uv_f, lum, baseRadius);
+              
+              // Apply to original colors
+              vec3 finalColor = texColor.rgb * shape;
+              float finalOpacity = texColor.a * shape;
+              
+              fragColor = vec4(finalColor, finalOpacity);
+            }
+          `;
+          
+          // Compile shaders
+          const vertexShader = this.compileShader(gl.VERTEX_SHADER, vertexShaderSource);
+          const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+          
+          // Create program
+          this.program = gl.createProgram();
+          gl.attachShader(this.program, vertexShader);
+          gl.attachShader(this.program, fragmentShader);
+          gl.linkProgram(this.program);
+          
+          if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+            throw new Error('Program link error: ' + gl.getProgramInfoLog(this.program));
+          }
+          
+          // Get uniform locations
+          this.uniformLocations = {
+            u_image: gl.getUniformLocation(this.program, 'u_image'),
+            u_resolution: gl.getUniformLocation(this.program, 'u_resolution'),
+            u_size: gl.getUniformLocation(this.program, 'u_size'),
+            u_radius: gl.getUniformLocation(this.program, 'u_radius'),
+            u_contrast: gl.getUniformLocation(this.program, 'u_contrast')
+          };
+          
+          // Get attribute location
+          this.positionLocation = gl.getAttribLocation(this.program, 'a_position');
+        }
+        
+        compileShader(type, source) {
+          const gl = this.gl;
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            const info = gl.getShaderInfoLog(shader);
+            gl.deleteShader(shader);
+            throw new Error('Shader compile error: ' + info);
+          }
+          
+          return shader;
+        }
+        
+        setupGeometry() {
+          const gl = this.gl;
+          
+          // Create fullscreen quad
+          const positions = new Float32Array([
+            -1, -1,
+             1, -1,
+            -1,  1,
+            -1,  1,
+             1, -1,
+             1,  1
+          ]);
+          
+          const positionBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+          
+          // Create VAO
+          this.vao = gl.createVertexArray();
+          gl.bindVertexArray(this.vao);
+          gl.enableVertexAttribArray(this.positionLocation);
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 0, 0);
+        }
+        
+        createTexture() {
+          const gl = this.gl;
+          
+          this.texture = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, this.texture);
+          
+          // Set texture parameters
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        }
+        
+        updateVideoTexture() {
+          const gl = this.gl;
+          
+          gl.bindTexture(gl.TEXTURE_2D, this.texture);
+          
+          // THIS IS THE KEY: WebGL accepts video elements directly!
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            this.video
+          );
+        }
+        
+        setupResize() {
+          this.resizeObserver = new ResizeObserver(() => {
+            this.resize();
+          });
+          this.resizeObserver.observe(this.container);
+        }
+        
+        resize() {
+          const rect = this.container.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          
+          this.canvas.width = rect.width * dpr;
+          this.canvas.height = rect.height * dpr;
+          this.canvas.style.width = rect.width + 'px';
+          this.canvas.style.height = rect.height + 'px';
+          
+          this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        }
+        
+        render() {
+          const gl = this.gl;
+          
+          // Clear
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          
+          // Use program
+          gl.useProgram(this.program);
+          
+          // Bind VAO
+          gl.bindVertexArray(this.vao);
+          
+          // Update video texture if playing
+          if (this.isPlaying && this.video.readyState >= this.video.HAVE_CURRENT_DATA) {
+            this.updateVideoTexture();
+          }
+          
+          // Bind texture
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, this.texture);
+          gl.uniform1i(this.uniformLocations.u_image, 0);
+          
+          // Set uniforms
+          gl.uniform2f(this.uniformLocations.u_resolution, this.canvas.width, this.canvas.height);
+          gl.uniform1f(this.uniformLocations.u_size, this.uniforms.u_size);
+          gl.uniform1f(this.uniformLocations.u_radius, this.uniforms.u_radius);
+          gl.uniform1f(this.uniformLocations.u_contrast, this.uniforms.u_contrast);
+          
+          // Enable blending
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          
+          // Draw
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+          
+          // Continue loop if playing
+          if (this.isPlaying) {
+            this.animationId = requestAnimationFrame(() => this.render());
+          }
+        }
+        
+        setUniforms(uniforms) {
+          Object.assign(this.uniforms, uniforms);
+          if (!this.isPlaying) {
+            // If not playing, render once to show the update
+            this.render();
+          }
+        }
+        
+        startUpdating() {
+          if (!this.isPlaying) {
+            this.isPlaying = true;
+            this.video.play();
+            this.render();
+          }
+        }
+        
+        stopUpdating() {
+          this.isPlaying = false;
+          this.video.pause();
+          if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+            this.animationId = null;
+          }
+        }
+        
+        dispose() {
+          this.stopUpdating();
+          if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+          }
+          // Clean up WebGL resources
+          const gl = this.gl;
+          gl.deleteTexture(this.texture);
+          gl.deleteProgram(this.program);
+          gl.deleteVertexArray(this.vao);
+        }
+      }
+
+      // ============================================
+      // INITIALIZE SHADER
+      // ============================================
+      const container = document.querySelector('[shader="pixel"]');
+      const video = container.querySelector('video');
+      
+      let shader;
+      let controller;
+      
+      // Wait for video to be ready
+      video.addEventListener('canplay', () => {
+        console.log('Video ready:', video.videoWidth, 'x', video.videoHeight);
+        
+        // Create shader instance
+        shader = new VideoShader(container, video);
+        
+        // Set initial uniforms
+        shader.setUniforms({
+          u_size: 1.0,
+          u_radius: 2.0,
+          u_contrast: 0.01
+        });
+        
+        // Create controller for scroll trigger
+        controller = {
+          started: false,
+          start() {
+            if (this.started) return;
+            this.started = true;
+            
+            // Animate from dots (1.0) to clear (0.1)
+            animate(1.0, 0.1, {
+              duration: 6,
+              ease: [0.36, -0.01, 0.41, 1.01],
+              onUpdate: (u_size) => {
+                shader.setUniforms({ u_size });
+              }
+            });
+            
+            // Start video playback
+            shader.startUpdating();
+          }
+        };
+        
+        // Set up intersection observer for scroll trigger
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                controller.start();
+                observer.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.25 }
+        );
+        
+        observer.observe(container);
+      }, { once: true });
+      
+      // Load video
+      video.load();
+
+      // ============================================
+      // VIDEO CONTROLS
+      // ============================================
+      const playBtn = document.getElementById('play-btn');
+      const pauseBtn = document.getElementById('pause-btn');
+      const sizeSlider = document.getElementById('size-slider');
+      const sizeValue = document.getElementById('size-value');
+
+      playBtn.addEventListener('click', () => {
+        if (shader) {
+          shader.startUpdating();
+          playBtn.classList.add('active');
+          pauseBtn.classList.remove('active');
+        }
+      });
+
+      pauseBtn.addEventListener('click', () => {
+        if (shader) {
+          shader.stopUpdating();
+          pauseBtn.classList.add('active');
+          playBtn.classList.remove('active');
+        }
+      });
+
+      sizeSlider.addEventListener('input', (e) => {
+        const size = parseFloat(e.target.value);
+        sizeValue.textContent = size.toFixed(2);
+        if (shader) {
+          shader.setUniforms({ u_size: size });
+        }
+      });
+    </script>
+  </body>
+</html>

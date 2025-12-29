@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shader Scroll Trigger Test</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+          sans-serif;
+        line-height: 1.4;
+      }
+
+      .section {
+        padding: 80px 24px;
+        max-width: 980px;
+        margin: 0 auto;
+      }
+
+      .spacer {
+        height: 90vh;
+        background: linear-gradient(to bottom, #f6f6f6, #ffffff);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+      }
+
+      /* Your shader container (we're calling it "canvas" in JS, but it's a div) */
+      [shader="pixel"] {
+        position: relative;
+        width: min(900px, 100%);
+        height: 420px;
+        margin: 24px auto;
+        border-radius: 18px;
+        overflow: hidden;
+        background: #eee;
+      }
+
+      /* The source <img> that becomes the texture */
+      [shader="pixel"] img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .label {
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+
+      .hint {
+        color: #666;
+        font-size: 14px;
+      }
+
+      /* External trigger marker */
+      .trigger {
+        padding: 18px 16px;
+        border: 1px dashed #bbb;
+        border-radius: 12px;
+        background: #fafafa;
+        margin: 18px 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="section">
+      <h1>Halftone Shader Scroll Trigger Demo</h1>
+      <p class="hint">
+        Scroll down. One shader will self-trigger when ~25% visible. Another
+        will trigger when the external trigger reaches the top zone
+        (rootMargin).
+      </p>
+    </div>
+
+    <div class="spacer">Scroll ⬇️ (spacer)</div>
+
+    <!-- ========== SELF-TRIGGER SHADER (no shader-start attribute) ========== -->
+    <div class="section">
+      <div class="label">
+        Self-trigger (starts when this element is 25% visible)
+      </div>
+
+      <div shader="pixel" shader-delay="0ms">
+        <!-- Use a CORS-friendly image. picsum is usually fine. -->
+        <img
+          crossorigin="anonymous"
+          src="./frames/frame_0001.webp"
+          alt="Self trigger"
+        />
+      </div>
+    </div>
+
+    <div class="spacer">Keep scrolling ⬇️ (spacer)</div>
+
+    <!-- ========== EXTERNAL TRIGGER ELEMENT ========== -->
+    <div class="section">
+      <div class="label">External trigger below</div>
+      <div class="trigger" shader-trigger="hero">
+        I am the trigger: <code>shader-trigger="hero"</code><br />
+        When I enter the “top 20%” zone (via rootMargin), the shader with
+        <code>shader-start="hero"</code> will animate.
+      </div>
+
+      <!-- ========== EXTERNALLY TRIGGERED SHADER ========== -->
+      <div shader="pixel" shader-start="hero" shader-delay="250ms">
+        <img
+          crossorigin="anonymous"
+          src="./frames/frame_0001.webp"
+          alt="External trigger"
+        />
+      </div>
+    </div>
+
+    <div class="spacer">End ✅</div>
+
+    <script type="module">
+      import {
+        ShaderMount,
+        HalftoneDotsGrids,
+        HalftoneDotsTypes,
+        ShaderFitOptions,
+        getShaderColorFromString,
+        halftoneDotsFragmentShader,
+        defaultObjectSizing,
+      } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+      import { animate } from "https://esm.sh/motion@12.23.26";
+
+      /* =====================================================
+         COLLECT ELEMENTS
+      ===================================================== */
+      const allShaders = document.querySelectorAll('[shader="pixel"]');
+      const triggerEls = document.querySelectorAll("[shader-trigger]");
+
+      const shaderMap = new Map(); // shader-start keyed
+      const selfShaders = []; // no external trigger
+
+      // VIDEO FRAMES CONFIG
+      const TOTAL_FRAMES = 228;
+      const FPS = 30;
+      const FRAMES_DIR = "./frames";
+      const frameImages = [];
+      let framesLoaded = 0;
+
+      // Preload frames
+      console.log("Preloading frames...");
+      for (let i = 1; i <= TOTAL_FRAMES; i++) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        // Pad with zeros to matching ffmpeg output: frame_0001.webp
+        const paddedIndex = String(i).padStart(4, "0");
+        img.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+        img.onload = () => {
+          framesLoaded++;
+          if (framesLoaded === TOTAL_FRAMES) {
+            console.log("All frames loaded!");
+            startVideoAnimation();
+          }
+        };
+        frameImages.push(img);
+      }
+
+      /* =====================================================
+         INIT SHADERS
+      ===================================================== */
+      for (const canvas of allShaders) {
+        const img = canvas.querySelector("img");
+        if (!img || !img.src) continue;
+
+        img.style.opacity = "0";
+        img.style.pointerEvents = "none";
+
+        const image = img.src;
+        const startKey = canvas.getAttribute("shader-start");
+
+        /* ---------- DELAY ---------- */
+        const delayAttr = canvas.getAttribute("shader-delay") || "0";
+        const delayMs = parseFloat(delayAttr.replace("ms", "")) || 0;
+
+        /* ---------- PRESET ---------- */
+        const preset = {
+          ...defaultObjectSizing,
+          fit: "cover",
+          speed: 0,
+          frame: 0,
+          colorBack: "#000000" /* Darker background for flame video effect */,
+          colorFront: "#ffffff",
+          size: 0.6,
+          radius: 2,
+          contrast: 0.01,
+          originalColors: true /* Keep original colors for video */,
+          inverted: false,
+          grainMixer: 0,
+          grainOverlay: 0,
+          grainSize: 0.5,
+          grid: "square",
+          type: "holes",
+          image,
+        };
+
+        /* ---------- UNIFORMS ---------- */
+        const uniformsProp = {
+          u_image: preset.image,
+          u_size: preset.size,
+          u_radius: preset.radius,
+          u_contrast: preset.contrast,
+          u_originalColors: preset.originalColors,
+          u_inverted: preset.inverted,
+          u_grainMixer: preset.grainMixer,
+          u_grainOverlay: preset.grainOverlay,
+          u_grainSize: preset.grainSize,
+          u_rotation: preset.rotation,
+          u_scale: preset.scale,
+          u_offsetX: preset.offsetX,
+          u_offsetY: preset.offsetY,
+          u_originX: preset.originX,
+          u_originY: preset.originY,
+          u_worldWidth: preset.worldWidth,
+          u_worldHeight: preset.worldHeight,
+          u_colorFront: getShaderColorFromString(preset.colorFront),
+          u_colorBack: getShaderColorFromString(preset.colorBack),
+          u_grid: HalftoneDotsGrids[preset.grid],
+          u_type: HalftoneDotsTypes[preset.type],
+          u_fit: ShaderFitOptions[preset.fit],
+        };
+
+        async function processUniforms(props) {
+          const out = {};
+          const promises = [];
+
+          Object.entries(props).forEach(([k, v]) => {
+            if (typeof v === "string") {
+              const i = new Image();
+              i.crossOrigin = "anonymous";
+              const p = new Promise((res, rej) => {
+                i.onload = () => {
+                  out[k] = i;
+                  res();
+                };
+                i.onerror = rej;
+              });
+              i.src = v;
+              promises.push(p);
+            } else {
+              out[k] = v;
+            }
+          });
+
+          await Promise.all(promises);
+          return out;
+        }
+
+        const uniforms = await processUniforms(uniformsProp);
+
+        const shader = new ShaderMount(
+          canvas,
+          halftoneDotsFragmentShader,
+          uniforms,
+          {},
+          preset.speed,
+          preset.frame,
+          preset.minPixelRatio,
+          preset.maxPixelCount,
+          preset.mipmaps
+        );
+
+        // Force initial (0%) frame
+        shader.setUniforms({ u_size: 1 });
+
+        /* ---------- CONTROLLER ---------- */
+        const controller = {
+          started: false,
+          shaderInstance: shader, // Store shader reference
+          start() {
+            if (this.started) return;
+            this.started = true;
+
+            setTimeout(() => {
+              animate(1, 0.1, {
+                duration: 6,
+                ease: [0.36, -0.01, 0.41, 1.01],
+                onUpdate: (u_size) => {
+                  shader.setUniforms({ u_size });
+                },
+              });
+            }, delayMs);
+          },
+        };
+
+        if (startKey) {
+          shaderMap.set(startKey, controller);
+        } else {
+          selfShaders.push({ canvas, controller });
+        }
+      }
+
+      /* =====================================================
+         VIDEO ANIMATION LOOP
+      ===================================================== */
+      function startVideoAnimation() {
+        let currentFrame = 0;
+        const interval = 1000 / FPS;
+
+        setInterval(() => {
+          if (frameImages.length < TOTAL_FRAMES) return;
+
+          const nextImage = frameImages[currentFrame];
+
+          // precise frame update to video shader(s)
+          // For this demo, let's update ALL active shaders with the video frame
+          // Or specifically the ones that are "started" or intended to be video.
+          // Assuming all shaders in this file should use the video texture for now.
+
+          [
+            ...selfShaders.map((s) => s.controller),
+            ...shaderMap.values(),
+          ].forEach((ctrl) => {
+            // Optional: only update if started, or update always to show video playing even before "reveal"
+            // Let's update always so user sees it moving
+            if (ctrl.shaderInstance) {
+              ctrl.shaderInstance.setUniforms({ u_image: nextImage });
+            }
+          });
+
+          currentFrame = (currentFrame + 1) % TOTAL_FRAMES;
+        }, interval);
+      }
+
+      /* =====================================================
+         SELF-TRIGGER OBSERVER (25%)
+      ===================================================== */
+      const selfObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            entry.target._shaderController.start();
+            selfObserver.unobserve(entry.target);
+          });
+        },
+        { threshold: 0.25 }
+      );
+
+      selfShaders.forEach(({ canvas, controller }) => {
+        canvas._shaderController = controller;
+        selfObserver.observe(canvas);
+      });
+
+      /* =====================================================
+         EXTERNAL TRIGGER OBSERVER (40% TOP-ish)
+      ===================================================== */
+      const triggerObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+
+            const key = entry.target.getAttribute("shader-trigger");
+            const shader = shaderMap.get(key);
+            if (!shader) return;
+
+            shader.start();
+            triggerObserver.unobserve(entry.target);
+          });
+        },
+        {
+          rootMargin: "-80% 0px -20% 0px",
+        }
+      );
+
+      triggerEls.forEach((el) => triggerObserver.observe(el));
+    </script>
+  </body>
+</html>

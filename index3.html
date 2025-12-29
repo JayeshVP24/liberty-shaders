@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Animated Halftone Shader</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700&display=swap');
+      
+      * {
+        box-sizing: border-box;
+      }
+      
+      body {
+        margin: 0;
+        font-family: 'Syne', system-ui, sans-serif;
+        background: #0d0d0d;
+        color: #f0f0f0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 40px 20px;
+      }
+      
+      /* Subtle grid background */
+      body::before {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-image: 
+          linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+        background-size: 60px 60px;
+        pointer-events: none;
+        z-index: -1;
+      }
+      
+      .header {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+      
+      h1 {
+        font-size: clamp(1.8rem, 4vw, 2.5rem);
+        font-weight: 700;
+        margin: 0 0 12px 0;
+        background: linear-gradient(135deg, #fff 0%, #888 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        letter-spacing: -0.02em;
+      }
+      
+      .subtitle {
+        color: #666;
+        font-size: 0.95rem;
+        margin: 0;
+        letter-spacing: 0.03em;
+      }
+      
+      /* Shader container */
+      .shader-wrapper {
+        position: relative;
+        width: min(1000px, 100%);
+        margin-bottom: 32px;
+      }
+      
+      [shader="pixel"] {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #1a1a1a;
+        box-shadow: 
+          0 0 0 1px rgba(255,255,255,0.05),
+          0 20px 60px -20px rgba(0,0,0,0.7);
+      }
+      
+      [shader="pixel"] img {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      
+      /* Animation indicator */
+      .pulse-indicator {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        font-size: 12px;
+        color: #aaa;
+        z-index: 10;
+      }
+      
+      .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: #4ade80;
+        border-radius: 50%;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+      }
+      
+      /* Controls panel */
+      .controls {
+        width: min(1000px, 100%);
+        background: linear-gradient(180deg, #161616 0%, #111 100%);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 16px;
+        padding: 28px 32px;
+      }
+      
+      .controls-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      
+      .controls-header h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+        color: #fff;
+      }
+      
+      .controls-icon {
+        font-size: 1.2rem;
+      }
+      
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      
+      .control-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      
+      .control-label {
+        min-width: 140px;
+        font-size: 0.85rem;
+        color: #888;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      
+      .control-label span {
+        font-size: 0.7rem;
+        color: #555;
+      }
+      
+      .slider-container {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      
+      input[type="range"] {
+        flex: 1;
+        height: 6px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: #2a2a2a;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        background: #fff;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        transition: transform 0.15s ease;
+      }
+      
+      input[type="range"]::-webkit-slider-thumb:hover {
+        transform: scale(1.15);
+      }
+      
+      input[type="range"]::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        background: #fff;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      }
+      
+      .value-display {
+        min-width: 56px;
+        padding: 8px 12px;
+        background: #0a0a0a;
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        color: #4ade80;
+        text-align: center;
+      }
+      
+      /* Toggle button for animation */
+      .toggle-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 8px;
+        padding-top: 20px;
+        border-top: 1px solid rgba(255,255,255,0.06);
+      }
+      
+      .toggle-btn {
+        padding: 10px 20px;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        background: #1a1a1a;
+        color: #888;
+        font-family: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .toggle-btn:hover {
+        background: #222;
+        color: #fff;
+      }
+      
+      .toggle-btn.active {
+        background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+        color: #000;
+        border-color: transparent;
+        font-weight: 600;
+      }
+      
+      /* Preset buttons */
+      .presets {
+        display: flex;
+        gap: 8px;
+        margin-left: auto;
+      }
+      
+      .preset-btn {
+        padding: 8px 14px;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 6px;
+        background: transparent;
+        color: #666;
+        font-family: inherit;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .preset-btn:hover {
+        background: #222;
+        color: #fff;
+        border-color: rgba(255,255,255,0.2);
+      }
+    </style>
+  </head>
+  
+  <body>
+    <div class="header">
+      <h1>✦ Animated Halftone Shader</h1>
+      <p class="subtitle">Continuous breathing animation on still image</p>
+    </div>
+    
+    <div class="shader-wrapper">
+      <div shader="pixel" id="shader-container">
+        <img
+          crossorigin="anonymous"
+          src="./Home Hero Manifest (1) (1).png"
+          alt="Hero Manifest"
+        />
+        <div class="pulse-indicator">
+          <div class="pulse-dot"></div>
+          <span>ANIMATING</span>
+        </div>
+      </div>
+    </div>
+    
+    <div class="controls">
+      <div class="controls-header">
+        <span class="controls-icon">⚙</span>
+        <h2>Shader Settings</h2>
+      </div>
+      
+      <div class="control-group">
+        <!-- Base Size -->
+        <div class="control-row">
+          <div class="control-label">
+            Base Dot Size
+            <span>Center point of animation</span>
+          </div>
+          <div class="slider-container">
+            <input type="range" id="base-size" min="0.1" max="1.5" step="0.01" value="0.5" />
+            <div class="value-display" id="base-size-value">0.50</div>
+          </div>
+        </div>
+        
+        <!-- Animation Amplitude -->
+        <div class="control-row">
+          <div class="control-label">
+            Animation Range
+            <span>How much it scales up/down</span>
+          </div>
+          <div class="slider-container">
+            <input type="range" id="amplitude" min="0.02" max="0.4" step="0.01" value="0.15" />
+            <div class="value-display" id="amplitude-value">0.15</div>
+          </div>
+        </div>
+        
+        <!-- Animation Speed -->
+        <div class="control-row">
+          <div class="control-label">
+            Animation Speed
+            <span>Cycle duration in seconds</span>
+          </div>
+          <div class="slider-container">
+            <input type="range" id="speed" min="0.5" max="6" step="0.1" value="2.5" />
+            <div class="value-display" id="speed-value">2.5s</div>
+          </div>
+        </div>
+        
+        <!-- Dot Radius -->
+        <div class="control-row">
+          <div class="control-label">
+            Dot Radius
+            <span>Sharpness of dots</span>
+          </div>
+          <div class="slider-container">
+            <input type="range" id="radius" min="0.5" max="4" step="0.1" value="2" />
+            <div class="value-display" id="radius-value">2.0</div>
+          </div>
+        </div>
+        
+        <!-- Toggle and Presets -->
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="toggle-animation">● Animation ON</button>
+          
+          <div class="presets">
+            <button class="preset-btn" data-base="0.3" data-amp="0.08" data-speed="3">Subtle</button>
+            <button class="preset-btn" data-base="0.5" data-amp="0.15" data-speed="2.5">Default</button>
+            <button class="preset-btn" data-base="0.7" data-amp="0.25" data-speed="1.5">Bold</button>
+            <button class="preset-btn" data-base="0.4" data-amp="0.35" data-speed="1">Dramatic</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { animate } from "https://esm.sh/motion@12.23.26";
+      import {
+        ShaderMount,
+        HalftoneDotsGrids,
+        HalftoneDotsTypes,
+        ShaderFitOptions,
+        getShaderColorFromString,
+        halftoneDotsFragmentShader,
+        defaultObjectSizing
+      } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+      // ============================================
+      // SHADER INITIALIZATION
+      // ============================================
+      const container = document.getElementById('shader-container');
+      const imgEl = container.querySelector('img');
+      
+      let shader;
+      let animationController = null;
+      let isAnimating = true;
+      
+      // Animation parameters
+      let baseSize = 0.5;
+      let amplitude = 0.15;
+      let speed = 2.5;
+      
+      // Wait for image to load
+      if (imgEl.complete) {
+        initShader();
+      } else {
+        imgEl.addEventListener('load', initShader);
+      }
+      
+      async function initShader() {
+        imgEl.style.opacity = "0";
+        imgEl.style.pointerEvents = "none";
+        
+        const preset = {
+          ...defaultObjectSizing,
+          fit: "cover",
+          speed: 0,
+          frame: 0,
+          colorBack: "#000000",
+          colorFront: "#ffffff",
+          size: baseSize,
+          radius: 2,
+          contrast: 0.01,
+          originalColors: true,
+          inverted: false,
+          grainMixer: 0,
+          grainOverlay: 0,
+          grainSize: 0.5,
+          grid: "square",
+          type: "holes"
+        };
+        
+        // Load image
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = imgEl.src;
+        });
+        
+        const uniforms = {
+          u_image: img,
+          u_size: preset.size,
+          u_radius: preset.radius,
+          u_contrast: preset.contrast,
+          u_originalColors: preset.originalColors,
+          u_inverted: preset.inverted,
+          u_grainMixer: preset.grainMixer,
+          u_grainOverlay: preset.grainOverlay,
+          u_grainSize: preset.grainSize,
+          u_rotation: preset.rotation,
+          u_scale: preset.scale,
+          u_offsetX: preset.offsetX,
+          u_offsetY: preset.offsetY,
+          u_originX: preset.originX,
+          u_originY: preset.originY,
+          u_worldWidth: preset.worldWidth,
+          u_worldHeight: preset.worldHeight,
+          u_colorFront: getShaderColorFromString(preset.colorFront),
+          u_colorBack: getShaderColorFromString(preset.colorBack),
+          u_grid: HalftoneDotsGrids[preset.grid],
+          u_type: HalftoneDotsTypes[preset.type],
+          u_fit: ShaderFitOptions[preset.fit]
+        };
+        
+        shader = new ShaderMount(
+          container,
+          halftoneDotsFragmentShader,
+          uniforms,
+          {},
+          preset.speed,
+          preset.frame,
+          preset.minPixelRatio,
+          preset.maxPixelCount,
+          preset.mipmaps
+        );
+        
+        console.log('Shader initialized');
+        
+        // Start the breathing animation
+        startBreathingAnimation();
+      }
+      
+      // ============================================
+      // BREATHING ANIMATION
+      // ============================================
+      function startBreathingAnimation() {
+        if (animationController) {
+          animationController.stop();
+        }
+        
+        if (!isAnimating || !shader) return;
+        
+        const minSize = Math.max(0.05, baseSize - amplitude);
+        const maxSize = Math.min(2, baseSize + amplitude);
+        
+        // Create infinite back-and-forth animation
+        animationController = animate(minSize, maxSize, {
+          duration: speed,
+          ease: "easeInOut",
+          repeat: Infinity,
+          repeatType: "mirror",
+          onUpdate: (value) => {
+            shader.setUniforms({ u_size: value });
+          }
+        });
+      }
+      
+      function stopAnimation() {
+        if (animationController) {
+          animationController.stop();
+          animationController = null;
+        }
+        // Set to base size when stopped
+        if (shader) {
+          shader.setUniforms({ u_size: baseSize });
+        }
+      }
+      
+      // ============================================
+      // CONTROLS
+      // ============================================
+      const baseSizeSlider = document.getElementById('base-size');
+      const baseSizeValue = document.getElementById('base-size-value');
+      const amplitudeSlider = document.getElementById('amplitude');
+      const amplitudeValue = document.getElementById('amplitude-value');
+      const speedSlider = document.getElementById('speed');
+      const speedValue = document.getElementById('speed-value');
+      const radiusSlider = document.getElementById('radius');
+      const radiusValue = document.getElementById('radius-value');
+      const toggleBtn = document.getElementById('toggle-animation');
+      const indicator = document.querySelector('.pulse-indicator');
+      
+      baseSizeSlider.addEventListener('input', (e) => {
+        baseSize = parseFloat(e.target.value);
+        baseSizeValue.textContent = baseSize.toFixed(2);
+        if (isAnimating) {
+          startBreathingAnimation();
+        } else {
+          shader?.setUniforms({ u_size: baseSize });
+        }
+      });
+      
+      amplitudeSlider.addEventListener('input', (e) => {
+        amplitude = parseFloat(e.target.value);
+        amplitudeValue.textContent = amplitude.toFixed(2);
+        if (isAnimating) {
+          startBreathingAnimation();
+        }
+      });
+      
+      speedSlider.addEventListener('input', (e) => {
+        speed = parseFloat(e.target.value);
+        speedValue.textContent = speed.toFixed(1) + 's';
+        if (isAnimating) {
+          startBreathingAnimation();
+        }
+      });
+      
+      radiusSlider.addEventListener('input', (e) => {
+        const radius = parseFloat(e.target.value);
+        radiusValue.textContent = radius.toFixed(1);
+        shader?.setUniforms({ u_radius: radius });
+      });
+      
+      toggleBtn.addEventListener('click', () => {
+        isAnimating = !isAnimating;
+        
+        if (isAnimating) {
+          toggleBtn.textContent = '● Animation ON';
+          toggleBtn.classList.add('active');
+          indicator.style.display = 'flex';
+          startBreathingAnimation();
+        } else {
+          toggleBtn.textContent = '○ Animation OFF';
+          toggleBtn.classList.remove('active');
+          indicator.style.display = 'none';
+          stopAnimation();
+        }
+      });
+      
+      // Preset buttons
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          baseSize = parseFloat(btn.dataset.base);
+          amplitude = parseFloat(btn.dataset.amp);
+          speed = parseFloat(btn.dataset.speed);
+          
+          // Update sliders
+          baseSizeSlider.value = baseSize;
+          baseSizeValue.textContent = baseSize.toFixed(2);
+          amplitudeSlider.value = amplitude;
+          amplitudeValue.textContent = amplitude.toFixed(2);
+          speedSlider.value = speed;
+          speedValue.textContent = speed.toFixed(1) + 's';
+          
+          if (isAnimating) {
+            startBreathingAnimation();
+          } else {
+            shader?.setUniforms({ u_size: baseSize });
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
+

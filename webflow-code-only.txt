@@ -1,0 +1,211 @@
+================================================================================
+WEBFLOW VIDEO SHADER - COPY & PASTE CODE
+================================================================================
+
+STEP 1: Upload all 228 WebP files from the "frames" folder to Webflow Assets
+
+STEP 2: In Webflow Designer, add a DIV with these custom attributes:
+   - Attribute: shader
+   - Value: pixel
+
+STEP 3: Inside that DIV, add an IMAGE with:
+   - Src: ./frames/frame_0001.webp (or your Webflow asset URL)
+   - Custom Attribute: crossorigin="anonymous"
+
+STEP 4: Style the DIV:
+   - Position: Fixed
+   - Top: 0, Left: 0
+   - Width: 100vw, Height: 100vh
+   - Background: Black
+   - Overflow: Hidden
+
+STEP 5: Copy the code below into Webflow Project Settings > Custom Code > Footer Code
+
+================================================================================
+
+<script type="module">
+  import {
+    ShaderMount,
+    HalftoneDotsGrids,
+    HalftoneDotsTypes,
+    ShaderFitOptions,
+    getShaderColorFromString,
+    halftoneDotsFragmentShader,
+    defaultObjectSizing
+  } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+  import { animate } from "https://esm.sh/motion@12.23.26";
+
+  const TOTAL_FRAMES = 228;
+  const FPS = 30;
+  
+  // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
+  const FRAMES_DIR = "https://uploads-ssl.webflow.com/YOUR_SITE_ID/frames";
+  
+  const frameImages = [];
+  let framesLoaded = 0;
+
+  for (let i = 1; i <= TOTAL_FRAMES; i++) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    const paddedIndex = String(i).padStart(4, "0");
+    img.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+    
+    img.onload = () => {
+      framesLoaded++;
+      if (framesLoaded === TOTAL_FRAMES) {
+        console.log("All frames loaded!");
+        startVideoAnimation();
+      }
+    };
+    
+    frameImages.push(img);
+  }
+
+  const canvas = document.querySelector('[shader="pixel"]');
+  const img = canvas?.querySelector("img");
+  
+  if (!canvas || !img) {
+    console.error("Shader container or image not found");
+  }
+
+  img.style.opacity = "0";
+  img.style.pointerEvents = "none";
+
+  const preset = {
+    ...defaultObjectSizing,
+    fit: "cover",
+    speed: 0,
+    frame: 0,
+    colorBack: "#000000",
+    colorFront: "#ffffff",
+    size: 0.6,
+    radius: 2,
+    contrast: 0.01,
+    originalColors: true,
+    inverted: false,
+    grainMixer: 0,
+    grainOverlay: 0,
+    grainSize: 0.5,
+    grid: "square",
+    type: "holes",
+    image: img.src
+  };
+
+  const uniformsProp = {
+    u_image: preset.image,
+    u_size: preset.size,
+    u_radius: preset.radius,
+    u_contrast: preset.contrast,
+    u_originalColors: preset.originalColors,
+    u_inverted: preset.inverted,
+    u_grainMixer: preset.grainMixer,
+    u_grainOverlay: preset.grainOverlay,
+    u_grainSize: preset.grainSize,
+    u_rotation: preset.rotation,
+    u_scale: preset.scale,
+    u_offsetX: preset.offsetX,
+    u_offsetY: preset.offsetY,
+    u_originX: preset.originX,
+    u_originY: preset.originY,
+    u_worldWidth: preset.worldWidth,
+    u_worldHeight: preset.worldHeight,
+    u_colorFront: getShaderColorFromString(preset.colorFront),
+    u_colorBack: getShaderColorFromString(preset.colorBack),
+    u_grid: HalftoneDotsGrids[preset.grid],
+    u_type: HalftoneDotsTypes[preset.type],
+    u_fit: ShaderFitOptions[preset.fit]
+  };
+
+  async function processUniforms(props) {
+    const out = {};
+    const promises = [];
+
+    Object.entries(props).forEach(([k, v]) => {
+      if (typeof v === "string") {
+        const i = new Image();
+        i.crossOrigin = "anonymous";
+        const p = new Promise((res, rej) => {
+          i.onload = () => { out[k] = i; res(); };
+          i.onerror = rej;
+        });
+        i.src = v;
+        promises.push(p);
+      } else {
+        out[k] = v;
+      }
+    });
+
+    await Promise.all(promises);
+    return out;
+  }
+
+  let shader;
+  
+  (async () => {
+    const uniforms = await processUniforms(uniformsProp);
+
+    shader = new ShaderMount(
+      canvas,
+      halftoneDotsFragmentShader,
+      uniforms,
+      {},
+      preset.speed,
+      preset.frame,
+      preset.minPixelRatio,
+      preset.maxPixelCount,
+      preset.mipmaps
+    );
+
+    shader.setUniforms({ u_size: 1 });
+
+    const controller = {
+      started: false,
+      start() {
+        if (this.started) return;
+        this.started = true;
+
+        animate(1, 0.1, {
+          duration: 6,
+          ease: [0.36, -0.01, 0.41, 1.01],
+          onUpdate: (u_size) => {
+            shader.setUniforms({ u_size });
+          }
+        });
+      }
+    };
+
+    const selfObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            controller.start();
+            selfObserver.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.25 }
+    );
+
+    selfObserver.observe(canvas);
+  })();
+
+  function startVideoAnimation() {
+    let currentFrame = 0;
+    const interval = 1000 / FPS;
+
+    setInterval(() => {
+      if (frameImages.length < TOTAL_FRAMES || !shader) return;
+
+      const nextImage = frameImages[currentFrame];
+      shader.setUniforms({ u_image: nextImage });
+
+      currentFrame = (currentFrame + 1) % TOTAL_FRAMES;
+    }, interval);
+  }
+</script>
+
+================================================================================
+DONE! Publish your site and test.
+================================================================================
+

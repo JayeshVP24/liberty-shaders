@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fullscreen Video Shader</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+
+      /* Fullscreen shader container */
+      [shader="pixel"] {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+        overflow: hidden;
+      }
+
+      /* Hide the source image */
+      [shader="pixel"] img {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Fullscreen Video Shader -->
+    <div shader="pixel">
+      <img
+        crossorigin="anonymous"
+        src="./frames/frame_0001.webp"
+        alt="Video shader"
+      />
+    </div>
+
+    <script type="module">
+      import {
+        ShaderMount,
+        HalftoneDotsGrids,
+        HalftoneDotsTypes,
+        ShaderFitOptions,
+        getShaderColorFromString,
+        halftoneDotsFragmentShader,
+        defaultObjectSizing,
+      } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+      import { animate } from "https://esm.sh/motion@12.23.26";
+
+      /* =====================================================
+         VIDEO FRAMES CONFIG
+      ===================================================== */
+      const TOTAL_FRAMES = 228;
+      const FPS = 30;
+      const FRAMES_DIR = "./frames";
+      const frameImages = [];
+      let framesLoaded = 0;
+
+      // Preload frames
+      console.log("Preloading frames...");
+      for (let i = 1; i <= TOTAL_FRAMES; i++) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        const paddedIndex = String(i).padStart(4, "0");
+        img.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+        img.onload = () => {
+          framesLoaded++;
+          if (framesLoaded === TOTAL_FRAMES) {
+            console.log("All frames loaded!");
+            startVideoAnimation();
+          }
+        };
+        frameImages.push(img);
+      }
+
+      /* =====================================================
+         INIT SHADER
+      ===================================================== */
+      const canvas = document.querySelector('[shader="pixel"]');
+      const img = canvas.querySelector("img");
+
+      if (!img || !img.src) {
+        console.error("No image found in shader container");
+      }
+
+      img.style.opacity = "0";
+      img.style.pointerEvents = "none";
+
+      const image = img.src;
+
+      /* ---------- PRESET ---------- */
+      const preset = {
+        ...defaultObjectSizing,
+        fit: "cover",
+        speed: 0,
+        frame: 0,
+        colorBack: "#000000",
+        colorFront: "#ffffff",
+        size: 0.6,
+        radius: 2,
+        contrast: 0.01,
+        originalColors: true,
+        inverted: false,
+        grainMixer: 0,
+        grainOverlay: 0,
+        grainSize: 0.5,
+        grid: "square",
+        type: "holes",
+        image,
+      };
+
+      /* ---------- UNIFORMS ---------- */
+      const uniformsProp = {
+        u_image: preset.image,
+        u_size: preset.size,
+        u_radius: preset.radius,
+        u_contrast: preset.contrast,
+        u_originalColors: preset.originalColors,
+        u_inverted: preset.inverted,
+        u_grainMixer: preset.grainMixer,
+        u_grainOverlay: preset.grainOverlay,
+        u_grainSize: preset.grainSize,
+        u_rotation: preset.rotation,
+        u_scale: preset.scale,
+        u_offsetX: preset.offsetX,
+        u_offsetY: preset.offsetY,
+        u_originX: preset.originX,
+        u_originY: preset.originY,
+        u_worldWidth: preset.worldWidth,
+        u_worldHeight: preset.worldHeight,
+        u_colorFront: getShaderColorFromString(preset.colorFront),
+        u_colorBack: getShaderColorFromString(preset.colorBack),
+        u_grid: HalftoneDotsGrids[preset.grid],
+        u_type: HalftoneDotsTypes[preset.type],
+        u_fit: ShaderFitOptions[preset.fit],
+      };
+
+      async function processUniforms(props) {
+        const out = {};
+        const promises = [];
+
+        Object.entries(props).forEach(([k, v]) => {
+          if (typeof v === "string") {
+            const i = new Image();
+            i.crossOrigin = "anonymous";
+            const p = new Promise((res, rej) => {
+              i.onload = () => {
+                out[k] = i;
+                res();
+              };
+              i.onerror = rej;
+            });
+            i.src = v;
+            promises.push(p);
+          } else {
+            out[k] = v;
+          }
+        });
+
+        await Promise.all(promises);
+        return out;
+      }
+
+      // Initialize shader
+      let shader;
+
+      (async () => {
+        const uniforms = await processUniforms(uniformsProp);
+
+        shader = new ShaderMount(
+          canvas,
+          halftoneDotsFragmentShader,
+          uniforms,
+          {},
+          preset.speed,
+          preset.frame,
+          preset.minPixelRatio,
+          preset.maxPixelCount,
+          preset.mipmaps
+        );
+
+        // Force initial dotted state
+        shader.setUniforms({ u_size: 1 });
+
+        // Auto-start animation immediately on load
+        animate(1, 0.1, {
+          duration: 6,
+          ease: [0.36, -0.01, 0.41, 1.01],
+          onUpdate: (u_size) => {
+            shader.setUniforms({ u_size });
+          },
+        });
+      })();
+
+      /* =====================================================
+         VIDEO ANIMATION LOOP
+      ===================================================== */
+      function startVideoAnimation() {
+        let currentFrame = 0;
+        const interval = 1000 / FPS;
+
+        setInterval(() => {
+          if (frameImages.length < TOTAL_FRAMES || !shader) return;
+
+          const nextImage = frameImages[currentFrame];
+          shader.setUniforms({ u_image: nextImage });
+
+          currentFrame = (currentFrame + 1) % TOTAL_FRAMES;
+        }, interval);
+      }
+    </script>
+  </body>
+</html>
