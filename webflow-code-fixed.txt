@@ -1,0 +1,633 @@
+================================================================================
+WEBFLOW VIDEO SHADER - HERO + FEATURE ANIMATIONS
+================================================================================
+
+STEP 1: Upload all 228 WebP files from the "frames" folder to Webflow Assets (for hero video)
+
+STEP 2A: HERO VIDEO SHADER - In Webflow Designer, add a DIV with these custom attributes:
+   - Attribute: shader
+   - Value: video (this will play the frame sequence animation)
+   - (Optional) Attribute: shader-delay
+   - (Optional) Value: delay in milliseconds (e.g., 1000 for 1 second delay)
+   - Inside: add an IMAGE with Src: ./frames/frame_0001.webp
+   - Custom Attribute on IMAGE: crossorigin="anonymous"
+   Note: Hero starts on page load (not scroll-triggered)
+
+STEP 2B: FEATURE SHADERS - For feature images (right sticky panel), add a DIV with:
+   - Attribute: feature
+   - Value: number (1, 2, or 3)
+   - (Optional) Attribute: shader-delay
+   - (Optional) Value: delay in milliseconds (e.g., 1000 for 1 second delay)
+   - Inside: add an IMAGE with your image source
+   - Custom Attribute on IMAGE: crossorigin="anonymous"
+   Note: Each feature can have its own frame sequence directory configured
+
+STEP 2C: FEATURE TRIGGERS - On the left side text content for each feature, add:
+   - Attribute: feature-trigger
+   - Value: number matching the feature (1, 2, or 3)
+   - The shader animates when this trigger element reaches 40% from top of viewport
+   - This is REQUIRED for sticky panel layouts where all images are in viewport at once
+
+STEP 3: Style the DIVs:
+   HERO (shader="video"):
+   - Position: Fixed
+   - Top: 0, Left: 0
+   - Width: 100vw, Height: 100vh
+   - Background: Black
+   - Overflow: Hidden
+   
+   FEATURES (feature="1", feature="2", feature="3"):
+   - Style as needed for your layout
+   - Recommended: Set a defined width and height
+   - Can be positioned anywhere in your layout
+   - Same shader animation style applied to all features
+   - Each can have different frame sequence configured in code
+
+STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer Code
+
+================================================================================
+
+<script type="module">
+  import {
+    ShaderMount,
+    HalftoneDotsGrids,
+    HalftoneDotsTypes,
+    ShaderFitOptions,
+    getShaderColorFromString,
+    halftoneDotsFragmentShader,
+    defaultObjectSizing
+  } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+  import { animate } from "https://esm.sh/motion@12.23.26";
+
+  // ⚠️ WRAP EVERYTHING IN DOM READY TO ENSURE ELEMENTS EXIST
+  async function initShaders() {
+    console.log("🎬 Initializing all shaders...");
+
+    /* =====================================================
+       HERO VIDEO ANIMATION (shader="video")
+    ===================================================== */
+    const heroCanvas = document.querySelector('[shader="video"]');
+    
+    if (heroCanvas) {
+      console.log("🎥 Initializing hero video shader...");
+      initHeroVideoShader(heroCanvas);
+    }
+
+    /* =====================================================
+       FEATURE SHADERS (feature="1", feature="2", feature="3")
+       Uses external triggers (feature-trigger="1", etc.) for scroll detection
+    ===================================================== */
+    const featureControllers = new Map();
+    
+    // Initialize all 3 features
+    for (let i = 1; i <= 3; i++) {
+      const featureCanvas = document.querySelector(`[feature="${i}"]`);
+      const featureTrigger = document.querySelector(`[feature-trigger="${i}"]`);
+      
+      if (featureCanvas) {
+        console.log(`🎨 Initializing feature ${i} shader...`);
+        const controller = await initFeatureShader(featureCanvas, i);
+        if (controller) {
+          featureControllers.set(i, controller);
+        }
+      }
+      
+      if (featureTrigger && featureControllers.has(i)) {
+        console.log(`🎯 Feature ${i}: External trigger found`);
+      } else if (featureCanvas && !featureTrigger) {
+        console.warn(`⚠️ Feature ${i}: No trigger element found! Add feature-trigger="${i}" to the left-side text content.`);
+      }
+    }
+    
+    // Set up external trigger observers
+    const triggerObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+
+          const featureNum = parseInt(entry.target.getAttribute("feature-trigger"));
+          const controller = featureControllers.get(featureNum);
+          
+          if (!controller) {
+            console.warn(`⚠️ No shader controller found for feature ${featureNum}`);
+            return;
+          }
+
+          console.log(`🎯 Feature ${featureNum}: Trigger activated!`);
+          controller.start();
+          triggerObserver.unobserve(entry.target);
+        });
+      },
+      {
+        rootMargin: "-40% 0px -40% 0px" // Trigger when element is in middle 20% of viewport
+      }
+    );
+
+    // Observe all feature triggers
+    document.querySelectorAll('[feature-trigger]').forEach((el) => {
+      triggerObserver.observe(el);
+    });
+  }
+
+  /* =====================================================
+     HERO VIDEO SHADER WITH FRAME SEQUENCE
+  ===================================================== */
+  function initHeroVideoShader(canvas) {
+    const TOTAL_FRAMES = 228;
+    const FPS = 30;
+    
+    // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
+    const FRAMES_DIR = "https://liberty-shaders.vercel.app/frames";
+    
+    const frameImages = [];
+    let framesLoaded = 0;
+    let shader = null;
+    let shaderReady = false;
+
+    const img = canvas?.querySelector("img");
+    
+    if (!img) {
+      console.error("❌ Image inside hero shader container not found!");
+      return;
+    }
+
+    console.log("✅ Hero shader container and image found");
+    console.log("📸 Image source:", img.src);
+
+    // Get delay from custom attribute (in milliseconds)
+    const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
+    console.log(`⏱️ Hero shader delay: ${delayMs}ms`);
+
+    img.style.opacity = "0";
+    img.style.pointerEvents = "none";
+
+    // Preload frames
+    console.log("⏳ Preloading frames...");
+    for (let i = 1; i <= TOTAL_FRAMES; i++) {
+      const frameImg = new Image();
+      frameImg.crossOrigin = "anonymous";
+      const paddedIndex = String(i).padStart(4, "0");
+      frameImg.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+      
+      frameImg.onload = () => {
+        framesLoaded++;
+        if (framesLoaded === TOTAL_FRAMES) {
+          console.log("✅ All frames loaded!");
+          startVideoAnimation();
+        } else if (framesLoaded % 50 === 0) {
+          console.log(`📦 Loaded ${framesLoaded}/${TOTAL_FRAMES} frames...`);
+        }
+      };
+
+      frameImg.onerror = () => {
+        console.error(`❌ Failed to load frame ${i}: ${frameImg.src}`);
+      };
+      
+      frameImages.push(frameImg);
+    }
+
+    // Shader preset for hero
+    const preset = {
+      ...defaultObjectSizing,
+      fit: "cover",
+      speed: 0,
+      frame: 0,
+      colorBack: "#ffffff",
+      colorFront: "#b2aeae",
+      size: 0.6,
+      radius: 2,
+      contrast: 0.01,
+      originalColors: true,
+      grainMixer: 0,
+      grainOverlay: 0,
+      grainSize: 0.5,
+      grid: "square",
+      type: "holes",
+      image: img.src
+    };
+
+    const uniformsProp = {
+      u_image: preset.image,
+      u_size: preset.size,
+      u_radius: preset.radius,
+      u_contrast: preset.contrast,
+      u_originalColors: preset.originalColors,
+      u_inverted: preset.inverted,
+      u_grainMixer: preset.grainMixer,
+      u_grainOverlay: preset.grainOverlay,
+      u_grainSize: preset.grainSize,
+      u_rotation: preset.rotation,
+      u_scale: preset.scale,
+      u_offsetX: preset.offsetX,
+      u_offsetY: preset.offsetY,
+      u_originX: preset.originX,
+      u_originY: preset.originY,
+      u_worldWidth: preset.worldWidth,
+      u_worldHeight: preset.worldHeight,
+      u_colorFront: getShaderColorFromString(preset.colorFront),
+      u_colorBack: getShaderColorFromString(preset.colorBack),
+      u_grid: HalftoneDotsGrids[preset.grid],
+      u_type: HalftoneDotsTypes[preset.type],
+      u_fit: ShaderFitOptions[preset.fit]
+    };
+
+    async function processUniforms(props) {
+      const out = {};
+      const promises = [];
+
+      Object.entries(props).forEach(([k, v]) => {
+        if (typeof v === "string") {
+          const i = new Image();
+          i.crossOrigin = "anonymous";
+          const p = new Promise((res, rej) => {
+            i.onload = () => { out[k] = i; res(); };
+            i.onerror = rej;
+          });
+          i.src = v;
+          promises.push(p);
+        } else {
+          out[k] = v;
+        }
+      });
+
+      await Promise.all(promises);
+      return out;
+    }
+
+    // Initialize hero shader
+    (async () => {
+      try {
+        console.log("🔧 Processing hero uniforms...");
+        const uniforms = await processUniforms(uniformsProp);
+        
+        console.log("🎨 Creating hero shader instance...");
+        shader = new ShaderMount(
+          canvas,
+          halftoneDotsFragmentShader,
+          uniforms,
+          {},
+          preset.speed,
+          preset.frame,
+          preset.minPixelRatio,
+          preset.maxPixelCount,
+          preset.mipmaps
+        );
+
+        console.log("✅ Hero shader created successfully!");
+        shader.setUniforms({ u_size: 1 });
+        shaderReady = true;
+
+        // Start animation immediately after delay (on load, not on scroll)
+        console.log(`⏱️ Hero shader ready, waiting ${delayMs}ms before starting...`);
+        setTimeout(() => {
+          console.log("🎬 Starting hero intro animation...");
+          animate(1, 0.1, {
+            duration: 6,
+            ease: [0.36, -0.01, 0.41, 1.01],
+            onUpdate: (u_size) => {
+              shader.setUniforms({ u_size });
+            }
+          });
+        }, delayMs);
+        
+      } catch (error) {
+        console.error("❌ Hero shader initialization error:", error);
+      }
+    })();
+
+    function startVideoAnimation() {
+      console.log("🎥 Starting video animation loop...");
+      
+      let currentFrame = 0;
+      const interval = 1000 / FPS;
+      let animationStarted = false;
+
+      const animationLoop = setInterval(() => {
+        if (!shader || !shaderReady) {
+          if (!animationStarted) {
+            console.log("⏳ Waiting for shader to initialize...");
+            animationStarted = true;
+          }
+          return;
+        }
+
+        if (!animationStarted) {
+          console.log("🎬 Video animation started!");
+          animationStarted = true;
+        }
+
+        if (frameImages.length < TOTAL_FRAMES) {
+          console.log("⏳ Waiting for all frames...");
+          return;
+        }
+
+        const nextImage = frameImages[currentFrame];
+        shader.setUniforms({ u_image: nextImage });
+
+        currentFrame = (currentFrame + 1) % TOTAL_FRAMES;
+      }, interval);
+    }
+  }
+
+  /* =====================================================
+     FEATURE SHADER WITH IMAGE SEQUENCE (SCROLL-TRIGGERED)
+  ===================================================== */
+  async function initFeatureShader(canvas, featureNumber) {
+    // ⚠️ CONFIGURE FRAME DIRECTORIES FOR EACH FEATURE HERE
+    const FEATURE_CONFIGS = {
+      1: {
+        // ✅ CONFIGURED: 240 frames extracted from feature1.mp4 (960px width, quality 50)
+        // Local path: "https://liberty-shaders.vercel.app/feature_frames_1"
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_1",
+        totalFrames: 240,
+        fps: 30
+      },
+      2: {
+        // ✅ CONFIGURED: 150 frames extracted from feature2.mp4 (960px width, quality 50)
+        // Local path: "https://liberty-shaders.vercel.app/feature_frames_2"
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_2", // ⚠️ UPLOAD feature_frames_2 folder to Webflow Assets and set URL here
+        totalFrames: 150,
+        fps: 30
+      },
+      3: {
+        // ✅ CONFIGURED: 185 frames extracted from feature3.mp4 (960px width, quality 50)
+        // Local path: "https://liberty-shaders.vercel.app/feature_frames_3"
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_3",
+        totalFrames: 185,
+        fps: 30
+      }
+    };
+
+    const config = FEATURE_CONFIGS[featureNumber];
+    const img = canvas.querySelector("img");
+    
+    if (!img || !img.src) {
+      console.error(`❌ Feature ${featureNumber}: Image not found in container!`);
+      return;
+    }
+
+    console.log(`✅ Feature ${featureNumber}: Container and image found`);
+    console.log(`📸 Feature ${featureNumber}: Image source:`, img.src);
+
+    // Get delay from custom attribute (in milliseconds)
+    const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
+    console.log(`⏱️ Feature ${featureNumber}: Delay: ${delayMs}ms`);
+
+    img.style.opacity = "0";
+    img.style.pointerEvents = "none";
+
+    // Check if frame sequence is configured
+    const hasFrameSequence = config.framesDir && config.totalFrames > 0;
+    
+    if (hasFrameSequence) {
+      console.log(`🎞️ Feature ${featureNumber}: Frame sequence enabled (${config.totalFrames} frames)`);
+    } else {
+      console.log(`🖼️ Feature ${featureNumber}: Static image mode (no frame sequence configured)`);
+    }
+
+    /* ---------- HELPER: PROCESS UNIFORMS ---------- */
+    async function processUniforms(props) {
+      const out = {};
+      const promises = [];
+
+      Object.entries(props).forEach(([k, v]) => {
+        if (typeof v === "string") {
+          const i = new Image();
+          i.crossOrigin = "anonymous";
+          const p = new Promise((res, rej) => {
+            i.onload = () => { out[k] = i; res(); };
+            i.onerror = rej;
+          });
+          i.src = v;
+          promises.push(p);
+        } else {
+          out[k] = v;
+        }
+      });
+
+      await Promise.all(promises);
+      return out;
+    }
+
+    /* ---------- PRESET ---------- */
+    const preset = {
+      ...defaultObjectSizing,
+      fit: "cover",
+      speed: 0,
+      frame: 0,
+      colorBack: "#ffffff",
+      colorFront: "#b2aeae",
+      size: 0.6,
+      radius: 2,
+      contrast: 0.01,
+      originalColors: true,
+      inverted: false,
+      grainMixer: 0,
+      grainOverlay: 0,
+      grainSize: 0.5,
+      grid: "square",
+      type: "holes",
+      image: img.src
+    };
+
+    /* ---------- UNIFORMS ---------- */
+    const uniformsProp = {
+      u_image: preset.image,
+      u_size: preset.size,
+      u_radius: preset.radius,
+      u_contrast: preset.contrast,
+      u_originalColors: preset.originalColors,
+      u_inverted: preset.inverted,
+      u_grainMixer: preset.grainMixer,
+      u_grainOverlay: preset.grainOverlay,
+      u_grainSize: preset.grainSize,
+      u_rotation: preset.rotation,
+      u_scale: preset.scale,
+      u_offsetX: preset.offsetX,
+      u_offsetY: preset.offsetY,
+      u_originX: preset.originX,
+      u_originY: preset.originY,
+      u_worldWidth: preset.worldWidth,
+      u_worldHeight: preset.worldHeight,
+      u_colorFront: getShaderColorFromString(preset.colorFront),
+      u_colorBack: getShaderColorFromString(preset.colorBack),
+      u_grid: HalftoneDotsGrids[preset.grid],
+      u_type: HalftoneDotsTypes[preset.type],
+      u_fit: ShaderFitOptions[preset.fit]
+    };
+
+    try {
+      const uniforms = await processUniforms(uniformsProp);
+
+      const shader = new ShaderMount(
+        canvas,
+        halftoneDotsFragmentShader,
+        uniforms,
+        {},
+        preset.speed,
+        preset.frame,
+        preset.minPixelRatio,
+        preset.maxPixelCount,
+        preset.mipmaps
+      );
+
+      // Force initial state
+      shader.setUniforms({ u_size: 1 });
+      console.log(`✅ Feature ${featureNumber}: Shader created successfully`);
+
+      // If frame sequence is configured, preload frames
+      let frameImages = [];
+      let framesLoaded = 0;
+      let animationReady = true;
+
+      if (hasFrameSequence) {
+        console.log(`⏳ Feature ${featureNumber}: Preloading ${config.totalFrames} frames...`);
+        animationReady = false;
+
+        for (let i = 1; i <= config.totalFrames; i++) {
+          const frameImg = new Image();
+          frameImg.crossOrigin = "anonymous";
+          const paddedIndex = String(i).padStart(4, "0");
+          frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
+          
+          frameImg.onload = () => {
+            framesLoaded++;
+            if (framesLoaded === config.totalFrames) {
+              console.log(`✅ Feature ${featureNumber}: All frames loaded!`);
+              animationReady = true;
+              startFrameAnimation();
+            } else if (framesLoaded % 25 === 0) {
+              console.log(`📦 Feature ${featureNumber}: Loaded ${framesLoaded}/${config.totalFrames} frames...`);
+            }
+          };
+
+          frameImg.onerror = () => {
+            console.error(`❌ Feature ${featureNumber}: Failed to load frame ${i}`);
+          };
+          
+          frameImages.push(frameImg);
+        }
+      }
+
+      // Frame animation loop (only if frame sequence is configured)
+      function startFrameAnimation() {
+        if (!hasFrameSequence) return;
+        
+        console.log(`🎥 Feature ${featureNumber}: Starting frame animation loop...`);
+        let currentFrame = 0;
+        const interval = 1000 / config.fps;
+
+        setInterval(() => {
+          if (!animationReady || frameImages.length < config.totalFrames) return;
+          
+          const nextImage = frameImages[currentFrame];
+          shader.setUniforms({ u_image: nextImage });
+          currentFrame = (currentFrame + 1) % config.totalFrames;
+        }, interval);
+      }
+
+      // Return controller for external trigger
+      const controller = {
+        started: false,
+        start() {
+          if (this.started) return;
+          this.started = true;
+          
+          console.log(`🎬 Feature ${featureNumber}: Animation triggered!`);
+          
+          setTimeout(() => {
+            animate(1, 0.1, {
+              duration: 6,
+              ease: [0.36, -0.01, 0.41, 1.01],
+              onUpdate: (u_size) => {
+                shader.setUniforms({ u_size });
+              },
+              onComplete: () => {
+                console.log(`✅ Feature ${featureNumber}: Intro animation complete`);
+              }
+            });
+          }, delayMs);
+        }
+      };
+
+      return controller;
+
+    } catch (error) {
+      console.error(`❌ Feature ${featureNumber}: Initialization error:`, error);
+      return null;
+    }
+  }
+
+  // Wait for DOM and Webflow to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initShaders);
+  } else {
+    // DOM is already ready
+    initShaders();
+  }
+
+  // Also try Webflow's page ready event as backup
+  if (window.Webflow) {
+    window.Webflow.push(initShaders);
+  }
+</script>
+
+================================================================================
+DONE! This version includes:
+- ✅ DOM ready checks
+- ✅ Detailed console logging for debugging
+- ✅ Error handling
+- ✅ Proper initialization order
+- ✅ HERO VIDEO: shader="video" with 228-frame sequence animation (starts on load)
+- ✅ FEATURE SHADERS: feature="1", feature="2", feature="3" 
+- ✅ EXTERNAL TRIGGERS: feature-trigger="1", "2", "3" on left-side text content
+- ✅ Triggers at 40% from top of viewport (perfect for sticky panel layouts)
+- ✅ Each feature supports image sequence animation with configurable frame directory
+- ✅ Easy configuration: Set framesDir, totalFrames, and fps for each feature in FEATURE_CONFIGS
+- ✅ Support for shader-delay attribute (delay in milliseconds)
+- ✅ Features work in both static image mode and frame sequence mode
+- ✅ Independent systems: Hero video runs separately from feature shaders
+- ⚠️ REMOVED: shader="pixel" attribute is no longer used
+
+SETUP FOR STICKY PANEL LAYOUT:
+Right side (sticky panel):
+  - feature="1", feature="2", feature="3" on image containers
+
+Left side (scrolling text content):
+  - feature-trigger="1" on the text section for feature 1
+  - feature-trigger="2" on the text section for feature 2  
+  - feature-trigger="3" on the text section for feature 3
+
+HOW TO ADD FRAME SEQUENCES TO FEATURES:
+1. Upload your frame images for each feature to Webflow Assets
+2. In the code below, find FEATURE_CONFIGS and update:
+   - framesDir: "https://your-webflow-url.com/feature-frames" (your asset URL)
+   - totalFrames: 150 (number of frames)
+   - fps: 30 (frames per second)
+3. Leave as null/0 to use static image mode (no animation)
+
+FEATURE FRAMES STATUS:
+
+Feature 1:
+✅ Frames extracted: 240 frames from feature1.mp4 (8 seconds @ 30fps)
+✅ Frame specs: 720px width × 892px height, WebP format, quality 25
+✅ Total size: 4.7MB
+✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_1
+
+Feature 2:
+✅ Frames extracted: 150 frames from feature2.mp4 (5 seconds @ 30fps)
+✅ Frame specs: 720px width × 899px height, WebP format, quality 25
+✅ Total size: 5.2MB
+✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_2
+
+Feature 3:
+✅ Frames extracted: 185 frames from feature3.mp4 (6.16 seconds @ 30fps)
+✅ Frame specs: 960px width × 1221px height, WebP format, quality 50
+✅ Total size: 5.0MB
+✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_3
+
+🎉 ALL FEATURES CONFIGURED! Ready for upload.
+================================================================================
+
+

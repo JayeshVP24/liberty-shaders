@@ -4,3 +4,5 @@
 # Ignore mp4 files
 *.mp4
 
+
+.DS_Store
