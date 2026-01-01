@@ -2,7 +2,7 @@
 WEBFLOW VIDEO SHADER - HERO + FEATURE ANIMATIONS
 ================================================================================
 
-STEP 1: Upload all 240 WebP files from the "frames" folder to Webflow Assets (for hero video)
+STEP 1: Upload all 234 WebP files from the "frames" folder to Webflow Assets (for hero video)
 
 STEP 2A: HERO VIDEO SHADER - In Webflow Designer, add a DIV with these custom attributes:
    - Attribute: shader
@@ -135,7 +135,7 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
      HERO VIDEO SHADER WITH FRAME SEQUENCE
   ===================================================== */
   function initHeroVideoShader(canvas) {
-    const TOTAL_FRAMES = 240;
+    const TOTAL_FRAMES = 234;
     const FPS = 30;
     
     // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
@@ -631,10 +631,10 @@ HOW TO ADD FRAME SEQUENCES TO FEATURES:
 ALL FRAMES STATUS:
 
 Hero Video:
-✅ Frames extracted: 240 frames from flora3.mp4 (8 seconds @ 30fps)
-✅ Frame specs: 960px width × 540px height (16:9), WebP format, quality 70
-✅ Source: 4K (3840×2160) scaled to 960×540
-✅ Total size: 4.7MB (18-19KB per frame)
+✅ Frames extracted: 234 frames from flora4.mp4 (7.8 seconds @ 30fps)
+✅ Frame specs: 1920px width × 1080px height (Full HD/2K), WebP format, quality 70
+✅ Source: HD (1280×720) upscaled to 1920×1080
+✅ Total size: 8.9MB (~37-38KB per frame)
 ✅ Configured URL: https://liberty-shaders.vercel.app/frames
 
 FEATURE FRAMES STATUS:
