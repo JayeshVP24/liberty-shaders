@@ -2,7 +2,7 @@
 WEBFLOW VIDEO SHADER - HERO + FEATURE ANIMATIONS
 ================================================================================
 
-STEP 1: Upload all 234 WebP files from the "frames" folder to Webflow Assets (for hero video)
+STEP 1: Upload all 227 WebP files from the "frames" folder to Webflow Assets (for hero video)
 
 STEP 2A: HERO VIDEO SHADER - In Webflow Designer, add a DIV with these custom attributes:
    - Attribute: shader
@@ -22,6 +22,8 @@ STEP 2B: FEATURE SHADERS - For feature images (right sticky panel), add a DIV wi
    - Custom Attribute on IMAGE: crossorigin="anonymous"
    Note: Each feature can have its own frame sequence directory configured
    Note: Features use PING-PONG loop (plays forward, then reverse, then repeats)
+   ✅ RESPONSIVE: You can add the same feature attribute to MULTIPLE elements
+      (e.g., feature="1" on both desktop and mobile images - both will be initialized)
 
 STEP 2C: FEATURE TRIGGERS - On the left side text content for each feature, add:
    - Attribute: feature-trigger
@@ -78,25 +80,36 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     /* =====================================================
        FEATURE SHADERS (feature="1", feature="2", feature="3")
        Uses external triggers (feature-trigger="1", etc.) for scroll detection
+       ⚠️ Supports MULTIPLE elements per feature (e.g., desktop + mobile)
     ===================================================== */
-    const featureControllers = new Map();
+    const featureControllers = new Map(); // Map<featureNum, controller[]>
     
-    // Initialize all 3 features
+    // Initialize all 3 features - find ALL elements with each feature attribute
     for (let i = 1; i <= 3; i++) {
-      const featureCanvas = document.querySelector(`[feature="${i}"]`);
+      // Use querySelectorAll to get ALL elements (desktop + mobile)
+      const featureCanvases = document.querySelectorAll(`[feature="${i}"]`);
       const featureTrigger = document.querySelector(`[feature-trigger="${i}"]`);
       
-      if (featureCanvas) {
-        console.log(`🎨 Initializing feature ${i} shader...`);
-        const controller = await initFeatureShader(featureCanvas, i);
-        if (controller) {
-          featureControllers.set(i, controller);
+      if (featureCanvases.length > 0) {
+        console.log(`🎨 Initializing feature ${i} shader... (${featureCanvases.length} element(s) found - desktop + mobile)`);
+        
+        // Initialize shader on ALL matching elements
+        const controllers = [];
+        for (const canvas of featureCanvases) {
+          const controller = await initFeatureShader(canvas, i);
+          if (controller) {
+            controllers.push(controller);
+          }
+        }
+        
+        if (controllers.length > 0) {
+          featureControllers.set(i, controllers);
         }
       }
       
       if (featureTrigger && featureControllers.has(i)) {
         console.log(`🎯 Feature ${i}: External trigger found`);
-      } else if (featureCanvas && !featureTrigger) {
+      } else if (featureCanvases.length > 0 && !featureTrigger) {
         console.warn(`⚠️ Feature ${i}: No trigger element found! Add feature-trigger="${i}" to the left-side text content.`);
       }
     }
@@ -108,15 +121,16 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
           if (!entry.isIntersecting) return;
 
           const featureNum = parseInt(entry.target.getAttribute("feature-trigger"));
-          const controller = featureControllers.get(featureNum);
+          const controllers = featureControllers.get(featureNum);
           
-          if (!controller) {
-            console.warn(`⚠️ No shader controller found for feature ${featureNum}`);
+          if (!controllers || controllers.length === 0) {
+            console.warn(`⚠️ No shader controllers found for feature ${featureNum}`);
             return;
           }
 
-          console.log(`🎯 Feature ${featureNum}: Trigger activated!`);
-          controller.start();
+          console.log(`🎯 Feature ${featureNum}: Trigger activated! Starting ${controllers.length} shader(s)...`);
+          // Start ALL controllers for this feature (desktop + mobile)
+          controllers.forEach(controller => controller.start());
           triggerObserver.unobserve(entry.target);
         });
       },
@@ -135,7 +149,7 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
      HERO VIDEO SHADER WITH FRAME SEQUENCE
   ===================================================== */
   function initHeroVideoShader(canvas) {
-    const TOTAL_FRAMES = 234;
+    const TOTAL_FRAMES = 227;
     const FPS = 30;
     
     // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
@@ -631,10 +645,10 @@ HOW TO ADD FRAME SEQUENCES TO FEATURES:
 ALL FRAMES STATUS:
 
 Hero Video:
-✅ Frames extracted: 234 frames from flora4.mp4 (7.8 seconds @ 30fps)
-✅ Frame specs: 1920px width × 1080px height (Full HD/2K), WebP format, quality 70
-✅ Source: HD (1280×720) upscaled to 1920×1080
-✅ Total size: 8.9MB (~37-38KB per frame)
+✅ Frames extracted: 227 frames from flora5.mp4 (7.56 seconds @ 30fps)
+✅ Frame specs: 1280px width × 720px height (HD 720p), WebP format, quality 70
+✅ Source: Native 1280×720 (no scaling)
+✅ Total size: 5.5MB (~24KB per frame)
 ✅ Configured URL: https://liberty-shaders.vercel.app/frames
 
 FEATURE FRAMES STATUS:
