@@ -21,6 +21,7 @@ STEP 2B: FEATURE SHADERS - For feature images (right sticky panel), add a DIV wi
    - Inside: add an IMAGE with your image source
    - Custom Attribute on IMAGE: crossorigin="anonymous"
    Note: Each feature can have its own frame sequence directory configured
+   Note: Features use PING-PONG loop (plays forward, then reverse, then repeats)
 
 STEP 2C: FEATURE TRIGGERS - On the left side text content for each feature, add:
    - Attribute: feature-trigger
@@ -337,25 +338,28 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     // ⚠️ CONFIGURE FRAME DIRECTORIES FOR EACH FEATURE HERE
     const FEATURE_CONFIGS = {
       1: {
-        // ✅ CONFIGURED: 240 frames extracted from feature1.mp4 (960px width, quality 50)
-        // Local path: "https://liberty-shaders.vercel.app/feature_frames_1"
+        // ✅ CONFIGURED: 158 frames from updated feature1.mp4 (720px width, quality 25)
+        // Ping-pong loop: plays forward then reverse
         framesDir: "https://liberty-shaders.vercel.app/feature_frames_1",
-        totalFrames: 240,
-        fps: 30
+        totalFrames: 158,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
       },
       2: {
-        // ✅ CONFIGURED: 150 frames extracted from feature2.mp4 (960px width, quality 50)
-        // Local path: "https://liberty-shaders.vercel.app/feature_frames_2"
-        framesDir: "https://liberty-shaders.vercel.app/feature_frames_2", // ⚠️ UPLOAD feature_frames_2 folder to Webflow Assets and set URL here
-        totalFrames: 150,
-        fps: 30
+        // ✅ CONFIGURED: 103 frames from updated feature2.mp4 (720px width, quality 25)
+        // Ping-pong loop: plays forward then reverse
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_2",
+        totalFrames: 103,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
       },
       3: {
-        // ✅ CONFIGURED: 185 frames extracted from feature3.mp4 (960px width, quality 50)
-        // Local path: "https://liberty-shaders.vercel.app/feature_frames_3"
+        // ✅ CONFIGURED: 150 frames from updated feature3.mp4 (960px width, quality 50)
+        // Ping-pong loop: plays forward then reverse
         framesDir: "https://liberty-shaders.vercel.app/feature_frames_3",
-        totalFrames: 185,
-        fps: 30
+        totalFrames: 150,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
       }
     };
 
@@ -510,12 +514,15 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
         }
       }
 
-      // Frame animation loop (only if frame sequence is configured)
+      // Frame animation loop with ping-pong support
       function startFrameAnimation() {
         if (!hasFrameSequence) return;
         
-        console.log(`🎥 Feature ${featureNumber}: Starting frame animation loop...`);
+        const loopType = config.pingPong ? "ping-pong" : "normal";
+        console.log(`🎥 Feature ${featureNumber}: Starting frame animation (${loopType} loop)...`);
+        
         let currentFrame = 0;
+        let direction = 1; // 1 for forward, -1 for reverse
         const interval = 1000 / config.fps;
 
         setInterval(() => {
@@ -523,7 +530,21 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
           
           const nextImage = frameImages[currentFrame];
           shader.setUniforms({ u_image: nextImage });
-          currentFrame = (currentFrame + 1) % config.totalFrames;
+          
+          if (config.pingPong) {
+            // Ping-pong loop: forward then reverse
+            currentFrame += direction;
+            
+            // Reverse direction at boundaries
+            if (currentFrame >= config.totalFrames - 1) {
+              direction = -1; // Start going backward
+            } else if (currentFrame <= 0) {
+              direction = 1; // Start going forward
+            }
+          } else {
+            // Normal loop: restart from beginning
+            currentFrame = (currentFrame + 1) % config.totalFrames;
+          }
         }, interval);
       }
 
@@ -619,24 +640,27 @@ Hero Video:
 FEATURE FRAMES STATUS:
 
 Feature 1:
-✅ Frames extracted: 240 frames from feature1.mp4 (8 seconds @ 30fps)
+✅ Frames extracted: 158 frames from updated feature1.mp4 (5.26s @ 30fps)
 ✅ Frame specs: 720px width × 892px height, WebP format, quality 25
-✅ Total size: 4.7MB
+✅ Total size: 3.1MB
+✅ Animation: Ping-pong loop (forward → reverse → repeat)
 ✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_1
 
 Feature 2:
-✅ Frames extracted: 150 frames from feature2.mp4 (5 seconds @ 30fps)
-✅ Frame specs: 720px width × 899px height, WebP format, quality 25
-✅ Total size: 5.2MB
+✅ Frames extracted: 103 frames from updated feature2.mp4 (3.43s @ 30fps)
+✅ Frame specs: 720px width × 916px height, WebP format, quality 25
+✅ Total size: 824KB
+✅ Animation: Ping-pong loop (forward → reverse → repeat)
 ✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_2
 
 Feature 3:
-✅ Frames extracted: 185 frames from feature3.mp4 (6.16 seconds @ 30fps)
-✅ Frame specs: 960px width × 1221px height, WebP format, quality 50
-✅ Total size: 5.0MB
+✅ Frames extracted: 150 frames from updated feature3.mp4 (5s @ 30fps)
+✅ Frame specs: 960px width × 1199px height, WebP format, quality 50
+✅ Total size: 11MB
+✅ Animation: Ping-pong loop (forward → reverse → repeat)
 ✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_3
 
-🎉 ALL FEATURES CONFIGURED! Ready for upload.
+🎉 ALL FEATURES UPDATED! Ping-pong loop implemented in code (no duplicate frames).
 ================================================================================
 
 
