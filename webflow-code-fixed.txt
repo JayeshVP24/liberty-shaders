@@ -4,16 +4,26 @@ WEBFLOW VIDEO SHADER - HERO + FEATURE ANIMATIONS
 
 STEP 1: Upload all 227 WebP files from the "frames" folder to Webflow Assets (for hero video)
 
-STEP 2A: HERO VIDEO SHADER - In Webflow Designer, add a DIV with these custom attributes:
+STEP 2A: LOGO LOADER (Optional) - Add a wrapper DIV for your loading animation:
+   - Attribute: logo-loader
+   - Value: 1
+   - This element stays visible until hero frames are loaded (minimum 3 seconds)
+   - After loading, it fades out with a 0.5s opacity transition
+   - Style: position fixed, full screen, high z-index, opacity 1
+
+STEP 2B: HERO VIDEO SHADER - In Webflow Designer, add a DIV with these custom attributes:
    - Attribute: shader
    - Value: video (this will play the frame sequence animation)
    - (Optional) Attribute: shader-delay
    - (Optional) Value: delay in milliseconds (e.g., 1000 for 1 second delay)
    - Inside: add an IMAGE with Src: ./frames/frame_0001.webp
    - Custom Attribute on IMAGE: crossorigin="anonymous"
-   Note: Hero starts on page load (not scroll-triggered)
+   Note: Hero animation starts AFTER logo loader fades out
+   Note: Animation is in TWO PARTS:
+         Part 1 = Pixel animation (big to small) on FIRST frame
+         Part 2 = Image sequencing starts AFTER Part 1 completes
 
-STEP 2B: FEATURE SHADERS - For feature images (right sticky panel), add a DIV with:
+STEP 2C: FEATURE SHADERS - For feature images (right sticky panel), add a DIV with:
    - Attribute: feature
    - Value: number (1, 2, or 3)
    - (Optional) Attribute: shader-delay
@@ -22,10 +32,12 @@ STEP 2B: FEATURE SHADERS - For feature images (right sticky panel), add a DIV wi
    - Custom Attribute on IMAGE: crossorigin="anonymous"
    Note: Each feature can have its own frame sequence directory configured
    Note: Features use PING-PONG loop (plays forward, then reverse, then repeats)
+   Note: Feature frames load ON-DEMAND when trigger enters viewport (not at page load)
+   Note: Animation is TWO PARTS (same as hero)
    ✅ RESPONSIVE: You can add the same feature attribute to MULTIPLE elements
       (e.g., feature="1" on both desktop and mobile images - both will be initialized)
 
-STEP 2C: FEATURE TRIGGERS - On the left side text content for each feature, add:
+STEP 2D: FEATURE TRIGGERS - On the left side text content for each feature, add:
    - Attribute: feature-trigger
    - Value: number matching the feature (1, 2, or 3)
    - The shader animates when this trigger element reaches 40% from top of viewport
@@ -63,9 +75,53 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
 
   import { animate } from "https://esm.sh/motion@12.23.26";
 
+  /* =====================================================
+     GLOBAL LOADER CONTROL
+  ===================================================== */
+  const LOADER_MIN_TIME = 3000; // 3 seconds minimum loader display
+
   // ⚠️ WRAP EVERYTHING IN DOM READY TO ENSURE ELEMENTS EXIST
   async function initShaders() {
     console.log("🎬 Initializing all shaders...");
+
+    /* =====================================================
+       LOGO LOADER (logo-loader="1")
+       Hides after MAX(3 seconds, hero frames loaded)
+    ===================================================== */
+    const logoLoader = document.querySelector('[logo-loader="1"]');
+    const loaderStartTime = Date.now();
+    let heroFramesReady = false;
+    let minTimeReached = false;
+    let loaderHidden = false;
+    let heroController = null;
+
+    function tryHideLoader() {
+      if (!heroFramesReady || !minTimeReached || loaderHidden) return;
+      loaderHidden = true;
+      
+      console.log("✅ Loader conditions met - hiding loader and starting hero animation...");
+      
+      if (logoLoader) {
+        logoLoader.style.transition = 'opacity 0.5s ease-out';
+        logoLoader.style.opacity = '0';
+        setTimeout(() => {
+          logoLoader.style.display = 'none';
+          console.log("🚀 Loader hidden!");
+        }, 500);
+      }
+      
+      // Start hero pixel animation after loader starts fading
+      if (heroController) {
+        heroController.startPixelAnimation();
+      }
+    }
+
+    // Set minimum time flag after 3 seconds
+    setTimeout(() => {
+      console.log("⏱️ Minimum 3 seconds reached");
+      minTimeReached = true;
+      tryHideLoader();
+    }, LOADER_MIN_TIME);
 
     /* =====================================================
        HERO VIDEO ANIMATION (shader="video")
@@ -74,13 +130,23 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     
     if (heroCanvas) {
       console.log("🎥 Initializing hero video shader...");
-      initHeroVideoShader(heroCanvas);
+      heroController = await initHeroVideoShader(heroCanvas, () => {
+        // Callback when hero frames are loaded
+        console.log("✅ Hero frames loaded!");
+        heroFramesReady = true;
+        tryHideLoader();
+      });
+    } else {
+      // No hero, skip loader and let features handle themselves
+      heroFramesReady = true;
+      minTimeReached = true;
     }
 
     /* =====================================================
        FEATURE SHADERS (feature="1", feature="2", feature="3")
        Uses external triggers (feature-trigger="1", etc.) for scroll detection
        ⚠️ Supports MULTIPLE elements per feature (e.g., desktop + mobile)
+       ⚠️ Frame loading is ON-DEMAND (starts when trigger enters viewport)
     ===================================================== */
     const featureControllers = new Map(); // Map<featureNum, controller[]>
     
@@ -130,7 +196,7 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
 
           console.log(`🎯 Feature ${featureNum}: Trigger activated! Starting ${controllers.length} shader(s)...`);
           // Start ALL controllers for this feature (desktop + mobile)
-          controllers.forEach(controller => controller.start());
+          controllers.forEach(controller => controller.startPixelAnimation());
           triggerObserver.unobserve(entry.target);
         });
       },
@@ -147,8 +213,11 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
 
   /* =====================================================
      HERO VIDEO SHADER WITH FRAME SEQUENCE
+     Two-Part Animation:
+       Part 1: Pixel animation (big to small) on FIRST frame only
+       Part 2: Image sequencing starts AFTER Part 1 completes
   ===================================================== */
-  function initHeroVideoShader(canvas) {
+  async function initHeroVideoShader(canvas, onFramesLoaded) {
     const TOTAL_FRAMES = 227;
     const FPS = 30;
     
@@ -164,7 +233,7 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     
     if (!img) {
       console.error("❌ Image inside hero shader container not found!");
-      return;
+      return null;
     }
 
     console.log("✅ Hero shader container and image found");
@@ -177,30 +246,52 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     img.style.opacity = "0";
     img.style.pointerEvents = "none";
 
-    // Preload frames
-    console.log("⏳ Preloading frames...");
-    for (let i = 1; i <= TOTAL_FRAMES; i++) {
-      const frameImg = new Image();
-      frameImg.crossOrigin = "anonymous";
-      const paddedIndex = String(i).padStart(4, "0");
-      frameImg.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
-      
-      frameImg.onload = () => {
-        framesLoaded++;
-        if (framesLoaded === TOTAL_FRAMES) {
-          console.log("✅ All frames loaded!");
-          startVideoAnimation();
-        } else if (framesLoaded % 50 === 0) {
-          console.log(`📦 Loaded ${framesLoaded}/${TOTAL_FRAMES} frames...`);
-        }
-      };
-
-      frameImg.onerror = () => {
-        console.error(`❌ Failed to load frame ${i}: ${frameImg.src}`);
-      };
-      
-      frameImages.push(frameImg);
+    // ⚡ Load ALL frames before starting (for two-part animation)
+    const BATCH_SIZE = 30;
+    
+    console.log("⏳ Loading ALL hero frames before animation starts...");
+    
+    async function loadFrameBatch(startIndex, endIndex) {
+      const promises = [];
+      for (let i = startIndex; i <= endIndex && i <= TOTAL_FRAMES; i++) {
+        const frameImg = new Image();
+        frameImg.crossOrigin = "anonymous";
+        const paddedIndex = String(i).padStart(4, "0");
+        
+        const promise = new Promise((resolve) => {
+          frameImg.onload = () => {
+            framesLoaded++;
+            resolve();
+          };
+          frameImg.onerror = () => {
+            console.error(`❌ Failed to load frame ${i}`);
+            resolve(); // Continue even on error
+          };
+        });
+        
+        frameImg.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+        frameImages[i - 1] = frameImg; // Store at correct index
+        promises.push(promise);
+      }
+      await Promise.all(promises);
     }
+    
+    // Load ALL frames before notifying ready
+    (async () => {
+      for (let batch = 0; batch * BATCH_SIZE < TOTAL_FRAMES; batch++) {
+        const start = batch * BATCH_SIZE + 1;
+        const end = Math.min((batch + 1) * BATCH_SIZE, TOTAL_FRAMES);
+        await loadFrameBatch(start, end);
+        console.log(`📦 Hero: ${framesLoaded}/${TOTAL_FRAMES} frames loaded...`);
+      }
+      
+      console.log(`✅ All ${TOTAL_FRAMES} hero frames loaded!`);
+      
+      // Signal that frames are ready (triggers loader hide)
+      if (onFramesLoaded) {
+        onFramesLoaded();
+      }
+    })();
 
     // Shader preset for hero
     const preset = {
@@ -271,77 +362,141 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
     }
 
     // Initialize hero shader
-    (async () => {
-      try {
-        console.log("🔧 Processing hero uniforms...");
-        const uniforms = await processUniforms(uniformsProp);
+    try {
+      console.log("🔧 Processing hero uniforms...");
+      const uniforms = await processUniforms(uniformsProp);
+      
+      console.log("🎨 Creating hero shader instance...");
+      shader = new ShaderMount(
+        canvas,
+        halftoneDotsFragmentShader,
+        uniforms,
+        {},
+        preset.speed,
+        preset.frame,
+        preset.minPixelRatio,
+        preset.maxPixelCount,
+        preset.mipmaps
+      );
+
+      console.log("✅ Hero shader created successfully!");
+      shader.setUniforms({ u_size: 1 }); // Start with large pixels
+      shaderReady = true;
+
+    } catch (error) {
+      console.error("❌ Hero shader initialization error:", error);
+      return null;
+    }
+
+    // Return controller for external triggering
+    const controller = {
+      pixelAnimationStarted: false,
+      sequenceStarted: false,
+      
+      // Part 1: Pixel animation on FIRST frame only
+      startPixelAnimation() {
+        if (this.pixelAnimationStarted) return;
+        this.pixelAnimationStarted = true;
         
-        console.log("🎨 Creating hero shader instance...");
-        shader = new ShaderMount(
-          canvas,
-          halftoneDotsFragmentShader,
-          uniforms,
-          {},
-          preset.speed,
-          preset.frame,
-          preset.minPixelRatio,
-          preset.maxPixelCount,
-          preset.mipmaps
-        );
-
-        console.log("✅ Hero shader created successfully!");
-        shader.setUniforms({ u_size: 1 });
-        shaderReady = true;
-
-        // Start animation immediately after delay (on load, not on scroll)
-        console.log(`⏱️ Hero shader ready, waiting ${delayMs}ms before starting...`);
+        console.log("🎬 Hero Part 1: Starting pixel animation (on first frame)...");
+        
+        // Ensure first frame is displayed during pixel animation
+        if (frameImages[0] && frameImages[0].complete) {
+          shader.setUniforms({ u_image: frameImages[0] });
+        }
+        
         setTimeout(() => {
-          console.log("🎬 Starting hero intro animation...");
           animate(1, 0.1, {
             duration: 6,
             ease: [0.36, -0.01, 0.41, 1.01],
             onUpdate: (u_size) => {
               shader.setUniforms({ u_size });
+            },
+            onComplete: () => {
+              console.log("✅ Hero Part 1 complete! Starting Part 2...");
+              // Part 2: Start image sequencing after pixel animation
+              this.startSequence();
             }
           });
         }, delayMs);
-        
-      } catch (error) {
-        console.error("❌ Hero shader initialization error:", error);
+      },
+      
+      // Part 2: Image sequencing (after pixel animation completes)
+      startSequence() {
+        if (this.sequenceStarted) return;
+        this.sequenceStarted = true;
+        startVideoAnimation();
       }
-    })();
+    };
+    
+    return controller;
 
     function startVideoAnimation() {
-      console.log("🎥 Starting video animation loop...");
+      console.log("🎥 Starting video animation loop (using requestAnimationFrame)...");
       
       let currentFrame = 0;
-      const interval = 1000 / FPS;
-      let animationStarted = false;
+      const frameDuration = 1000 / FPS; // ms per frame
+      let lastFrameTime = 0;
+      let loopStarted = false;
+      let isPaused = false;
 
-      const animationLoop = setInterval(() => {
-        if (!shader || !shaderReady) {
-          if (!animationStarted) {
-            console.log("⏳ Waiting for shader to initialize...");
-            animationStarted = true;
-          }
-          return;
-        }
+      // ⚡ PERFORMANCE: Pause animation when hero is not visible
+      const visibilityObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            isPaused = !entry.isIntersecting;
+            if (isPaused) {
+              console.log("⏸️ Hero paused (not visible)");
+            } else {
+              console.log("▶️ Hero resumed (visible)");
+              lastFrameTime = 0; // Reset timing to avoid jump
+            }
+          });
+        },
+        { threshold: 0.1 }
+      );
+      visibilityObserver.observe(canvas);
 
-        if (!animationStarted) {
+      function animationLoop(timestamp) {
+        // Request next frame immediately for smooth loop
+        requestAnimationFrame(animationLoop);
+        
+        // ⚡ PERFORMANCE: Skip updates when paused/not visible
+        if (isPaused) return;
+        
+        // Wait for shader to be ready
+        if (!shader || !shaderReady) return;
+
+        // Wait for minimum frames to be loaded
+        if (framesLoaded < 30) return;
+
+        if (!loopStarted) {
           console.log("🎬 Video animation started!");
-          animationStarted = true;
+          loopStarted = true;
+          lastFrameTime = timestamp;
         }
 
-        if (frameImages.length < TOTAL_FRAMES) {
-          console.log("⏳ Waiting for all frames...");
-          return;
+        // Time-based frame advancement (smoother than setInterval)
+        const elapsed = timestamp - lastFrameTime;
+        
+        if (elapsed >= frameDuration) {
+          // Only play frames that are loaded
+          const maxFrame = Math.min(framesLoaded, TOTAL_FRAMES) - 1;
+          const nextImage = frameImages[currentFrame];
+          
+          if (nextImage && nextImage.complete) {
+            shader.setUniforms({ u_image: nextImage });
+          }
+
+          currentFrame = (currentFrame + 1) % (maxFrame + 1);
+          
+          // Account for any lag to maintain consistent speed
+          lastFrameTime = timestamp - (elapsed % frameDuration);
         }
+      }
 
-        const nextImage = frameImages[currentFrame];
-        shader.setUniforms({ u_image: nextImage });
-
-        currentFrame = (currentFrame + 1) % TOTAL_FRAMES;
-      }, interval);
+      // Start the animation loop
+      requestAnimationFrame(animationLoop);
     }
   }
 
@@ -494,41 +649,56 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
       shader.setUniforms({ u_size: 1 });
       console.log(`✅ Feature ${featureNumber}: Shader created successfully`);
 
-      // If frame sequence is configured, preload frames
+      // If frame sequence is configured, frames load ON-DEMAND when trigger enters viewport
       let frameImages = [];
       let framesLoaded = 0;
-      let animationReady = true;
+      let animationReady = false;
+      let loadingStarted = false;
 
-      if (hasFrameSequence) {
-        console.log(`⏳ Feature ${featureNumber}: Preloading ${config.totalFrames} frames...`);
-        animationReady = false;
-
-        for (let i = 1; i <= config.totalFrames; i++) {
-          const frameImg = new Image();
-          frameImg.crossOrigin = "anonymous";
-          const paddedIndex = String(i).padStart(4, "0");
-          frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
-          
-          frameImg.onload = () => {
-            framesLoaded++;
-            if (framesLoaded === config.totalFrames) {
-              console.log(`✅ Feature ${featureNumber}: All frames loaded!`);
-              animationReady = true;
-              startFrameAnimation();
-            } else if (framesLoaded % 25 === 0) {
-              console.log(`📦 Feature ${featureNumber}: Loaded ${framesLoaded}/${config.totalFrames} frames...`);
-            }
-          };
-
-          frameImg.onerror = () => {
-            console.error(`❌ Feature ${featureNumber}: Failed to load frame ${i}`);
-          };
-          
-          frameImages.push(frameImg);
+      async function loadAllFrames() {
+        if (loadingStarted) return;
+        loadingStarted = true;
+        
+        const BATCH_SIZE = 20;
+        
+        async function loadBatch(start, end) {
+          const promises = [];
+          for (let i = start; i <= end && i <= config.totalFrames; i++) {
+            const frameImg = new Image();
+            frameImg.crossOrigin = "anonymous";
+            const paddedIndex = String(i).padStart(4, "0");
+            
+            const promise = new Promise((resolve) => {
+              frameImg.onload = () => { framesLoaded++; resolve(); };
+              frameImg.onerror = () => resolve();
+            });
+            
+            frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
+            frameImages[i - 1] = frameImg;
+            promises.push(promise);
+          }
+          await Promise.all(promises);
         }
+
+        console.log(`⏳ Feature ${featureNumber}: Loading ${config.totalFrames} frames...`);
+        
+        // Load ALL frames
+        for (let batch = 0; batch * BATCH_SIZE < config.totalFrames; batch++) {
+          const start = batch * BATCH_SIZE + 1;
+          const end = Math.min((batch + 1) * BATCH_SIZE, config.totalFrames);
+          await loadBatch(start, end);
+          console.log(`📦 Feature ${featureNumber}: ${framesLoaded}/${config.totalFrames} frames loaded...`);
+        }
+        
+        console.log(`✅ Feature ${featureNumber}: All ${config.totalFrames} frames loaded!`);
+        animationReady = true;
       }
 
-      // Frame animation loop with ping-pong support
+      if (!hasFrameSequence) {
+        animationReady = true; // Static image mode - always ready
+      }
+
+      // Frame animation loop with ping-pong support (using requestAnimationFrame)
       function startFrameAnimation() {
         if (!hasFrameSequence) return;
         
@@ -537,39 +707,90 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
         
         let currentFrame = 0;
         let direction = 1; // 1 for forward, -1 for reverse
-        const interval = 1000 / config.fps;
+        const frameDuration = 1000 / config.fps;
+        let lastFrameTime = 0;
+        let isPaused = false;
 
-        setInterval(() => {
-          if (!animationReady || frameImages.length < config.totalFrames) return;
+        // ⚡ PERFORMANCE: Pause animation when not visible
+        const visibilityObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              isPaused = !entry.isIntersecting;
+              if (!isPaused) lastFrameTime = 0; // Reset timing
+            });
+          },
+          { threshold: 0.1 }
+        );
+        visibilityObserver.observe(canvas);
+
+        function animationLoop(timestamp) {
+          requestAnimationFrame(animationLoop);
           
-          const nextImage = frameImages[currentFrame];
-          shader.setUniforms({ u_image: nextImage });
+          // ⚡ PERFORMANCE: Skip when paused/not visible
+          if (isPaused) return;
+          if (!animationReady || framesLoaded < 20) return;
           
-          if (config.pingPong) {
-            // Ping-pong loop: forward then reverse
-            currentFrame += direction;
-            
-            // Reverse direction at boundaries
-            if (currentFrame >= config.totalFrames - 1) {
-              direction = -1; // Start going backward
-            } else if (currentFrame <= 0) {
-              direction = 1; // Start going forward
-            }
-          } else {
-            // Normal loop: restart from beginning
-            currentFrame = (currentFrame + 1) % config.totalFrames;
+          // Initialize lastFrameTime on first run
+          if (lastFrameTime === 0) {
+            lastFrameTime = timestamp;
           }
-        }, interval);
+          
+          const elapsed = timestamp - lastFrameTime;
+          
+          if (elapsed >= frameDuration) {
+            const maxFrame = Math.min(framesLoaded, config.totalFrames) - 1;
+            const nextImage = frameImages[currentFrame];
+            
+            if (nextImage && nextImage.complete) {
+              shader.setUniforms({ u_image: nextImage });
+            }
+            
+            if (config.pingPong) {
+              // Ping-pong loop: forward then reverse
+              currentFrame += direction;
+              
+              // Reverse direction at boundaries (use loaded frames only)
+              if (currentFrame >= maxFrame) {
+                currentFrame = maxFrame;
+                direction = -1;
+              } else if (currentFrame <= 0) {
+                currentFrame = 0;
+                direction = 1;
+              }
+            } else {
+              // Normal loop: restart from beginning
+              currentFrame = (currentFrame + 1) % (maxFrame + 1);
+            }
+            
+            // Account for any lag
+            lastFrameTime = timestamp - (elapsed % frameDuration);
+          }
+        }
+
+        requestAnimationFrame(animationLoop);
       }
 
-      // Return controller for external trigger
+      // Return controller for external trigger (Two-Part Animation)
       const controller = {
-        started: false,
-        start() {
-          if (this.started) return;
-          this.started = true;
+        pixelAnimationStarted: false,
+        sequenceStarted: false,
+        
+        // Called when trigger enters viewport - starts loading + pixel animation
+        startPixelAnimation() {
+          if (this.pixelAnimationStarted) return;
+          this.pixelAnimationStarted = true;
           
-          console.log(`🎬 Feature ${featureNumber}: Animation triggered!`);
+          // Start loading frames NOW (on-demand when trigger visible)
+          if (hasFrameSequence) {
+            loadAllFrames();
+          }
+          
+          console.log(`🎬 Feature ${featureNumber} Part 1: Starting pixel animation (on first frame)...`);
+          
+          // Ensure first frame is displayed during pixel animation (if already loaded)
+          if (hasFrameSequence && frameImages[0] && frameImages[0].complete) {
+            shader.setUniforms({ u_image: frameImages[0] });
+          }
           
           setTimeout(() => {
             animate(1, 0.1, {
@@ -579,10 +800,22 @@ STEP 4: Copy the code below into Webflow Project Settings > Custom Code > Footer
                 shader.setUniforms({ u_size });
               },
               onComplete: () => {
-                console.log(`✅ Feature ${featureNumber}: Intro animation complete`);
+                console.log(`✅ Feature ${featureNumber} Part 1 complete! Starting Part 2...`);
+                // Part 2: Start image sequencing after pixel animation
+                this.startSequence();
               }
             });
           }, delayMs);
+        },
+        
+        // Part 2: Image sequencing (after pixel animation completes)
+        startSequence() {
+          if (this.sequenceStarted) return;
+          this.sequenceStarted = true;
+          
+          if (hasFrameSequence) {
+            startFrameAnimation();
+          }
         }
       };
 
@@ -614,7 +847,9 @@ DONE! This version includes:
 - ✅ Detailed console logging for debugging
 - ✅ Error handling
 - ✅ Proper initialization order
-- ✅ HERO VIDEO: shader="video" with 228-frame sequence animation (starts on load)
+- ✅ LOGO LOADER: logo-loader="1" hides after MAX(3 seconds, hero frames loaded)
+- ✅ TWO-PART ANIMATION: Part 1 = pixel animation on first frame, Part 2 = image sequencing
+- ✅ HERO VIDEO: shader="video" with 227-frame sequence animation
 - ✅ FEATURE SHADERS: feature="1", feature="2", feature="3" 
 - ✅ EXTERNAL TRIGGERS: feature-trigger="1", "2", "3" on left-side text content
 - ✅ Triggers at 40% from top of viewport (perfect for sticky panel layouts)
@@ -622,8 +857,34 @@ DONE! This version includes:
 - ✅ Easy configuration: Set framesDir, totalFrames, and fps for each feature in FEATURE_CONFIGS
 - ✅ Support for shader-delay attribute (delay in milliseconds)
 - ✅ Features work in both static image mode and frame sequence mode
-- ✅ Independent systems: Hero video runs separately from feature shaders
+- ✅ ON-DEMAND LOADING: Feature frames load only when their trigger enters viewport
 - ⚠️ REMOVED: shader="pixel" attribute is no longer used
+
+LOGO LOADER SETUP:
+Add a wrapper div with custom attribute:
+  - logo-loader="1"
+The loader will:
+  1. Show for minimum 3 seconds (even if frames load faster)
+  2. Wait for all hero frames to finish loading
+  3. Fade out with 0.5s opacity transition
+  4. Then trigger hero pixel animation
+
+ANIMATION FLOW:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Page Load                                                                  │
+│    ├─ Logo loader shows                                                     │
+│    ├─ 3 second timer starts                                                 │
+│    ├─ Hero frames start loading                                             │
+│    ├─ Wait for MAX(3 seconds, hero frames loaded)                           │
+│    ├─ Logo loader fades out                                                 │
+│    ├─ Hero Part 1: Pixel animation (6s) on FIRST frame                      │
+│    └─ Hero Part 2: Image sequencing starts after Part 1 completes           │
+│                                                                             │
+│  Feature Trigger (scroll - when trigger enters viewport)                    │
+│    ├─ Feature frames START LOADING NOW (on-demand)                          │
+│    ├─ Feature Part 1: Pixel animation (6s) on FIRST frame                   │
+│    └─ Feature Part 2: Image sequencing starts after Part 1 completes        │
+└─────────────────────────────────────────────────────────────────────────────┘
 
 SETUP FOR STICKY PANEL LAYOUT:
 Right side (sticky panel):
@@ -646,9 +907,9 @@ ALL FRAMES STATUS:
 
 Hero Video:
 ✅ Frames extracted: 227 frames from flora5.mp4 (7.56 seconds @ 30fps)
-✅ Frame specs: 1280px width × 720px height (HD 720p), WebP format, quality 70
-✅ Source: Native 1280×720 (no scaling)
-✅ Total size: 5.5MB (~24KB per frame)
+✅ Frame specs: 960px width × 540px height (16:9), WebP format, quality 50
+✅ Source: 1280×720 scaled to 960×540 for performance
+✅ Total size: 3.5MB (~13KB per frame)
 ✅ Configured URL: https://liberty-shaders.vercel.app/frames
 
 FEATURE FRAMES STATUS:
@@ -674,7 +935,13 @@ Feature 3:
 ✅ Animation: Ping-pong loop (forward → reverse → repeat)
 ✅ Configured URL: https://liberty-shaders.vercel.app/feature_frames_3
 
-🎉 ALL FEATURES UPDATED! Ping-pong loop implemented in code (no duplicate frames).
+🎉 ALL FEATURES UPDATED! 
+
+LATEST UPDATES:
+- ✅ Logo loader integration (logo-loader="1") - hides after MAX(3 seconds, hero frames loaded)
+- ✅ Two-part animation: Part 1 = pixel animation on first frame, Part 2 = image sequencing
+- ✅ ON-DEMAND feature loading: Feature frames only load when trigger enters viewport
+- ✅ Ping-pong loop implemented in code (no duplicate frames)
 ================================================================================
 
 
