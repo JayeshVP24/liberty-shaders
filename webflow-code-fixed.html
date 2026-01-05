@@ -1,0 +1,1016 @@
+<script type="module">
+  import {
+    ShaderMount,
+    HalftoneDotsGrids,
+    HalftoneDotsTypes,
+    ShaderFitOptions,
+    getShaderColorFromString,
+    halftoneDotsFragmentShader,
+    defaultObjectSizing
+  } from "https://esm.sh/@paper-design/shaders@0.0.68";
+
+  import { animate } from "https://esm.sh/motion@12.23.26";
+
+  /* =====================================================
+     GLOBAL LOADER CONTROL
+  ===================================================== */
+  const LOADER_MIN_TIME = 3000; // 3 seconds minimum loader display
+
+  // ⚠️ WRAP EVERYTHING IN DOM READY TO ENSURE ELEMENTS EXIST
+  async function initShaders() {
+    console.log("🎬 Initializing all shaders...");
+
+    /* =====================================================
+       LOGO LOADER (logo-loader="1")
+       Hides after MAX(3 seconds, hero frames loaded)
+    ===================================================== */
+    const logoLoader = document.querySelector('[logo-loader="1"]');
+    const loaderStartTime = Date.now();
+    let heroFramesReady = false;
+    let minTimeReached = false;
+    let loaderHidden = false;
+    let heroController = null;
+
+    function tryHideLoader() {
+      if (!heroFramesReady || !minTimeReached || loaderHidden) return;
+      loaderHidden = true;
+      
+      console.log("✅ Loader conditions met - hiding loader and starting hero animation...");
+      
+      if (logoLoader) {
+        logoLoader.style.transition = 'opacity 0.5s ease-out';
+        logoLoader.style.opacity = '0';
+        setTimeout(() => {
+          logoLoader.style.display = 'none';
+          console.log("🚀 Loader hidden!");
+        }, 500);
+      }
+      
+      // Start hero pixel animation after loader starts fading
+      if (heroController) {
+        heroController.startPixelAnimation();
+      }
+    }
+
+    // Set minimum time flag after 3 seconds
+    setTimeout(() => {
+      console.log("⏱️ Minimum 3 seconds reached");
+      minTimeReached = true;
+      tryHideLoader();
+    }, LOADER_MIN_TIME);
+
+    /* =====================================================
+       HERO VIDEO ANIMATION (shader="video")
+    ===================================================== */
+    const heroCanvas = document.querySelector('[shader="video"]');
+    
+    if (heroCanvas) {
+      console.log("🎥 Initializing hero video shader...");
+      heroController = await initHeroVideoShader(heroCanvas, () => {
+        // Callback when hero frames are loaded
+        console.log("✅ Hero frames loaded!");
+        heroFramesReady = true;
+        tryHideLoader();
+      });
+    } else {
+      // No hero, skip loader and let features handle themselves
+      heroFramesReady = true;
+      minTimeReached = true;
+    }
+
+    /* =====================================================
+       FEATURE SHADERS (feature="1", feature="2", feature="3")
+       Uses external triggers (feature-trigger="1", etc.) for scroll detection
+       ⚠️ Supports MULTIPLE elements per feature (e.g., desktop + mobile)
+       ⚠️ Frame loading is ON-DEMAND (starts when trigger enters viewport)
+    ===================================================== */
+    const featureControllers = new Map(); // Map<featureNum, controller[]>
+    
+    // Initialize all 3 features - find ALL elements with each feature attribute
+    for (let i = 1; i <= 3; i++) {
+      // Use querySelectorAll to get ALL elements (desktop + mobile)
+      const featureCanvases = document.querySelectorAll(`[feature="${i}"]`);
+      const featureTrigger = document.querySelector(`[feature-trigger="${i}"]`);
+      
+      if (featureCanvases.length > 0) {
+        console.log(`🎨 Initializing feature ${i} shader... (${featureCanvases.length} element(s) found - desktop + mobile)`);
+        
+        // Initialize shader on ALL matching elements
+        const controllers = [];
+        for (const canvas of featureCanvases) {
+          const controller = await initFeatureShader(canvas, i);
+          if (controller) {
+            controllers.push(controller);
+          }
+        }
+        
+        if (controllers.length > 0) {
+          featureControllers.set(i, controllers);
+        }
+      }
+      
+      if (featureTrigger && featureControllers.has(i)) {
+        console.log(`🎯 Feature ${i}: External trigger found`);
+      } else if (featureCanvases.length > 0 && !featureTrigger) {
+        console.warn(`⚠️ Feature ${i}: No trigger element found! Add feature-trigger="${i}" to the left-side text content.`);
+      }
+    }
+    
+    // Set up external trigger observers
+    const triggerObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+
+          const featureNum = parseInt(entry.target.getAttribute("feature-trigger"));
+          const controllers = featureControllers.get(featureNum);
+          
+          if (!controllers || controllers.length === 0) {
+            console.warn(`⚠️ No shader controllers found for feature ${featureNum}`);
+            return;
+          }
+
+          console.log(`🎯 Feature ${featureNum}: Trigger activated! Starting ${controllers.length} shader(s)...`);
+          // Start ALL controllers for this feature (desktop + mobile)
+          controllers.forEach(controller => controller.startPixelAnimation());
+          triggerObserver.unobserve(entry.target);
+        });
+      },
+      {
+        rootMargin: "-40% 0px -40% 0px" // Trigger when element is in middle 20% of viewport
+      }
+    );
+
+    // Observe all feature triggers
+    document.querySelectorAll('[feature-trigger]').forEach((el) => {
+      triggerObserver.observe(el);
+    });
+  }
+
+  /* =====================================================
+     HERO VIDEO SHADER WITH FRAME SEQUENCE
+     Two-Part Animation:
+       Part 1: Pixel animation (big to small) on FIRST frame only
+       Part 2: Image sequencing starts AFTER Part 1 completes
+  ===================================================== */
+  async function initHeroVideoShader(canvas, onFramesLoaded) {
+    const TOTAL_FRAMES = 227;
+    const FPS = 30;
+    
+    // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
+    const FRAMES_DIR = "https://liberty-shaders.vercel.app/frames";
+    
+    const frameImages = [];
+    let framesLoaded = 0;
+    let shader = null;
+    let shaderReady = false;
+
+    const img = canvas?.querySelector("img");
+    
+    if (!img) {
+      console.error("❌ Image inside hero shader container not found!");
+      return null;
+    }
+
+    console.log("✅ Hero shader container and image found");
+    console.log("📸 Image source:", img.src);
+
+    // Get delay from custom attribute (in milliseconds)
+    const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
+    console.log(`⏱️ Hero shader delay: ${delayMs}ms`);
+
+    img.style.opacity = "0";
+    img.style.pointerEvents = "none";
+
+    // ⚡ Load ALL frames before starting (for two-part animation)
+    const BATCH_SIZE = 30;
+    
+    console.log("⏳ Loading ALL hero frames before animation starts...");
+    
+    async function loadFrameBatch(startIndex, endIndex) {
+      const promises = [];
+      for (let i = startIndex; i <= endIndex && i <= TOTAL_FRAMES; i++) {
+        const frameImg = new Image();
+        frameImg.crossOrigin = "anonymous";
+        const paddedIndex = String(i).padStart(4, "0");
+        
+        const promise = new Promise((resolve) => {
+          frameImg.onload = () => {
+            framesLoaded++;
+            resolve();
+          };
+          frameImg.onerror = () => {
+            console.error(`❌ Failed to load frame ${i}`);
+            resolve(); // Continue even on error
+          };
+        });
+        
+        frameImg.src = `${FRAMES_DIR}/frame_${paddedIndex}.webp`;
+        frameImages[i - 1] = frameImg; // Store at correct index
+        promises.push(promise);
+      }
+      await Promise.all(promises);
+    }
+    
+    // Load ALL frames before notifying ready
+    (async () => {
+      for (let batch = 0; batch * BATCH_SIZE < TOTAL_FRAMES; batch++) {
+        const start = batch * BATCH_SIZE + 1;
+        const end = Math.min((batch + 1) * BATCH_SIZE, TOTAL_FRAMES);
+        await loadFrameBatch(start, end);
+        console.log(`📦 Hero: ${framesLoaded}/${TOTAL_FRAMES} frames loaded...`);
+      }
+      
+      console.log(`✅ All ${TOTAL_FRAMES} hero frames loaded!`);
+      
+      // Signal that frames are ready (triggers loader hide)
+      if (onFramesLoaded) {
+        onFramesLoaded();
+      }
+    })();
+
+    // Shader preset for hero
+    const preset = {
+      ...defaultObjectSizing,
+      fit: "cover",
+      speed: 0,
+      frame: 0,
+      colorBack: "#ffffff",
+      colorFront: "#b2aeae",
+      size: 0.6,
+      radius: 2,
+      contrast: 0.01,
+      originalColors: true,
+      grainMixer: 0,
+      grainOverlay: 0,
+      grainSize: 0.5,
+      grid: "square",
+      type: "holes",
+      image: img.src
+    };
+
+    const uniformsProp = {
+      u_image: preset.image,
+      u_size: preset.size,
+      u_radius: preset.radius,
+      u_contrast: preset.contrast,
+      u_originalColors: preset.originalColors,
+      u_inverted: preset.inverted,
+      u_grainMixer: preset.grainMixer,
+      u_grainOverlay: preset.grainOverlay,
+      u_grainSize: preset.grainSize,
+      u_rotation: preset.rotation,
+      u_scale: preset.scale,
+      u_offsetX: preset.offsetX,
+      u_offsetY: preset.offsetY,
+      u_originX: preset.originX,
+      u_originY: preset.originY,
+      u_worldWidth: preset.worldWidth,
+      u_worldHeight: preset.worldHeight,
+      u_colorFront: getShaderColorFromString(preset.colorFront),
+      u_colorBack: getShaderColorFromString(preset.colorBack),
+      u_grid: HalftoneDotsGrids[preset.grid],
+      u_type: HalftoneDotsTypes[preset.type],
+      u_fit: ShaderFitOptions[preset.fit]
+    };
+
+    async function processUniforms(props) {
+      const out = {};
+      const promises = [];
+
+      Object.entries(props).forEach(([k, v]) => {
+        if (typeof v === "string") {
+          const i = new Image();
+          i.crossOrigin = "anonymous";
+          const p = new Promise((res, rej) => {
+            i.onload = () => { out[k] = i; res(); };
+            i.onerror = rej;
+          });
+          i.src = v;
+          promises.push(p);
+        } else {
+          out[k] = v;
+        }
+      });
+
+      await Promise.all(promises);
+      return out;
+    }
+
+    // Initialize hero shader
+    try {
+      console.log("🔧 Processing hero uniforms...");
+      const uniforms = await processUniforms(uniformsProp);
+      
+      console.log("🎨 Creating hero shader instance...");
+      shader = new ShaderMount(
+        canvas,
+        halftoneDotsFragmentShader,
+        uniforms,
+        {},
+        preset.speed,
+        preset.frame,
+        preset.minPixelRatio,
+        preset.maxPixelCount,
+        preset.mipmaps
+      );
+
+      console.log("✅ Hero shader created successfully!");
+      shader.setUniforms({ u_size: 1 }); // Start with large pixels
+      shaderReady = true;
+
+    } catch (error) {
+      console.error("❌ Hero shader initialization error:", error);
+      return null;
+    }
+
+    // Return controller for external triggering
+    const controller = {
+      pixelAnimationStarted: false,
+      sequenceStarted: false,
+      
+      // Part 1: Pixel animation on FIRST frame only
+      startPixelAnimation() {
+        if (this.pixelAnimationStarted) return;
+        this.pixelAnimationStarted = true;
+        
+        console.log("🎬 Hero Part 1: Starting pixel animation (on first frame)...");
+        
+        // Ensure first frame is displayed during pixel animation
+        if (frameImages[0] && frameImages[0].complete) {
+          shader.setUniforms({ u_image: frameImages[0] });
+        }
+        
+        setTimeout(() => {
+          animate(1, 0.1, {
+            duration: 6,
+            ease: [0.36, -0.01, 0.41, 1.01],
+            onUpdate: (u_size) => {
+              shader.setUniforms({ u_size });
+            },
+            onComplete: () => {
+              console.log("✅ Hero Part 1 complete! Starting Part 2...");
+              // Part 2: Start image sequencing after pixel animation
+              this.startSequence();
+            }
+          });
+        }, delayMs);
+      },
+      
+      // Part 2: Image sequencing (after pixel animation completes)
+      startSequence() {
+        if (this.sequenceStarted) return;
+        this.sequenceStarted = true;
+        startVideoAnimation();
+      }
+    };
+    
+    return controller;
+
+    function startVideoAnimation() {
+      console.log("🎥 Starting video animation loop (using requestAnimationFrame)...");
+      
+      let currentFrame = 0;
+      const frameDuration = 1000 / FPS; // ms per frame
+      let lastFrameTime = 0;
+      let loopStarted = false;
+      let isPaused = false;
+
+      // ⚡ PERFORMANCE: Pause animation when hero is not visible
+      const visibilityObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            isPaused = !entry.isIntersecting;
+            if (isPaused) {
+              console.log("⏸️ Hero paused (not visible)");
+            } else {
+              console.log("▶️ Hero resumed (visible)");
+              lastFrameTime = 0; // Reset timing to avoid jump
+            }
+          });
+        },
+        { threshold: 0.1 }
+      );
+      visibilityObserver.observe(canvas);
+
+      function animationLoop(timestamp) {
+        // Request next frame immediately for smooth loop
+        requestAnimationFrame(animationLoop);
+        
+        // ⚡ PERFORMANCE: Skip updates when paused/not visible
+        if (isPaused) return;
+        
+        // Wait for shader to be ready
+        if (!shader || !shaderReady) return;
+
+        // Wait for minimum frames to be loaded
+        if (framesLoaded < 30) return;
+
+        if (!loopStarted) {
+          console.log("🎬 Video animation started!");
+          loopStarted = true;
+          lastFrameTime = timestamp;
+        }
+
+        // Time-based frame advancement (smoother than setInterval)
+        const elapsed = timestamp - lastFrameTime;
+        
+        if (elapsed >= frameDuration) {
+          // Only play frames that are loaded
+          const maxFrame = Math.min(framesLoaded, TOTAL_FRAMES) - 1;
+          const nextImage = frameImages[currentFrame];
+          
+          if (nextImage && nextImage.complete) {
+            shader.setUniforms({ u_image: nextImage });
+          }
+
+          currentFrame = (currentFrame + 1) % (maxFrame + 1);
+          
+          // Account for any lag to maintain consistent speed
+          lastFrameTime = timestamp - (elapsed % frameDuration);
+        }
+      }
+
+      // Start the animation loop
+      requestAnimationFrame(animationLoop);
+    }
+  }
+
+  /* =====================================================
+     FEATURE SHADER WITH IMAGE SEQUENCE (SCROLL-TRIGGERED)
+  ===================================================== */
+  async function initFeatureShader(canvas, featureNumber) {
+    // ⚠️ CONFIGURE FRAME DIRECTORIES FOR EACH FEATURE HERE
+    const FEATURE_CONFIGS = {
+      1: {
+        // ✅ CONFIGURED: 158 frames from updated feature1.mp4 (720px width, quality 25)
+        // Ping-pong loop: plays forward then reverse
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_1",
+        totalFrames: 158,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
+      },
+      2: {
+        // ✅ CONFIGURED: 103 frames from updated feature2.mp4 (720px width, quality 25)
+        // Ping-pong loop: plays forward then reverse
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_2",
+        totalFrames: 103,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
+      },
+      3: {
+        // ✅ CONFIGURED: 150 frames from updated feature3.mp4 (960px width, quality 50)
+        // Ping-pong loop: plays forward then reverse
+        framesDir: "https://liberty-shaders.vercel.app/feature_frames_3",
+        totalFrames: 150,
+        fps: 30,
+        pingPong: true  // Enable forward-reverse looping
+      }
+    };
+
+    const config = FEATURE_CONFIGS[featureNumber];
+    const img = canvas.querySelector("img");
+    
+    if (!img || !img.src) {
+      console.error(`❌ Feature ${featureNumber}: Image not found in container!`);
+      return;
+    }
+
+    console.log(`✅ Feature ${featureNumber}: Container and image found`);
+    console.log(`📸 Feature ${featureNumber}: Image source:`, img.src);
+
+    // Get delay from custom attribute (in milliseconds)
+    const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
+    console.log(`⏱️ Feature ${featureNumber}: Delay: ${delayMs}ms`);
+
+    img.style.opacity = "0";
+    img.style.pointerEvents = "none";
+
+    // Check if frame sequence is configured
+    const hasFrameSequence = config.framesDir && config.totalFrames > 0;
+    
+    if (hasFrameSequence) {
+      console.log(`🎞️ Feature ${featureNumber}: Frame sequence enabled (${config.totalFrames} frames)`);
+    } else {
+      console.log(`🖼️ Feature ${featureNumber}: Static image mode (no frame sequence configured)`);
+    }
+
+    /* ---------- HELPER: PROCESS UNIFORMS ---------- */
+    async function processUniforms(props) {
+      const out = {};
+      const promises = [];
+
+      Object.entries(props).forEach(([k, v]) => {
+        if (typeof v === "string") {
+          const i = new Image();
+          i.crossOrigin = "anonymous";
+          const p = new Promise((res, rej) => {
+            i.onload = () => { out[k] = i; res(); };
+            i.onerror = rej;
+          });
+          i.src = v;
+          promises.push(p);
+        } else {
+          out[k] = v;
+        }
+      });
+
+      await Promise.all(promises);
+      return out;
+    }
+
+    /* ---------- PRESET ---------- */
+    const preset = {
+      ...defaultObjectSizing,
+      fit: "cover",
+      speed: 0,
+      frame: 0,
+      colorBack: "#ffffff",
+      colorFront: "#b2aeae",
+      size: 0.6,
+      radius: 2,
+      contrast: 0.01,
+      originalColors: true,
+      inverted: false,
+      grainMixer: 0,
+      grainOverlay: 0,
+      grainSize: 0.5,
+      grid: "square",
+      type: "holes",
+      image: img.src
+    };
+
+    /* ---------- UNIFORMS ---------- */
+    const uniformsProp = {
+      u_image: preset.image,
+      u_size: preset.size,
+      u_radius: preset.radius,
+      u_contrast: preset.contrast,
+      u_originalColors: preset.originalColors,
+      u_inverted: preset.inverted,
+      u_grainMixer: preset.grainMixer,
+      u_grainOverlay: preset.grainOverlay,
+      u_grainSize: preset.grainSize,
+      u_rotation: preset.rotation,
+      u_scale: preset.scale,
+      u_offsetX: preset.offsetX,
+      u_offsetY: preset.offsetY,
+      u_originX: preset.originX,
+      u_originY: preset.originY,
+      u_worldWidth: preset.worldWidth,
+      u_worldHeight: preset.worldHeight,
+      u_colorFront: getShaderColorFromString(preset.colorFront),
+      u_colorBack: getShaderColorFromString(preset.colorBack),
+      u_grid: HalftoneDotsGrids[preset.grid],
+      u_type: HalftoneDotsTypes[preset.type],
+      u_fit: ShaderFitOptions[preset.fit]
+    };
+
+    try {
+      const uniforms = await processUniforms(uniformsProp);
+
+      const shader = new ShaderMount(
+        canvas,
+        halftoneDotsFragmentShader,
+        uniforms,
+        {},
+        preset.speed,
+        preset.frame,
+        preset.minPixelRatio,
+        preset.maxPixelCount,
+        preset.mipmaps
+      );
+
+      // Force initial state
+      shader.setUniforms({ u_size: 1 });
+      console.log(`✅ Feature ${featureNumber}: Shader created successfully`);
+
+      // If frame sequence is configured, frames load ON-DEMAND when trigger enters viewport
+      let frameImages = [];
+      let framesLoaded = 0;
+      let animationReady = false;
+      let loadingStarted = false;
+
+      async function loadAllFrames() {
+        if (loadingStarted) return;
+        loadingStarted = true;
+        
+        const BATCH_SIZE = 20;
+        
+        async function loadBatch(start, end) {
+          const promises = [];
+          for (let i = start; i <= end && i <= config.totalFrames; i++) {
+            const frameImg = new Image();
+            frameImg.crossOrigin = "anonymous";
+            const paddedIndex = String(i).padStart(4, "0");
+            
+            const promise = new Promise((resolve) => {
+              frameImg.onload = () => { framesLoaded++; resolve(); };
+              frameImg.onerror = () => resolve();
+            });
+            
+            frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
+            frameImages[i - 1] = frameImg;
+            promises.push(promise);
+          }
+          await Promise.all(promises);
+        }
+
+        console.log(`⏳ Feature ${featureNumber}: Loading ${config.totalFrames} frames...`);
+        
+        // Load ALL frames
+        for (let batch = 0; batch * BATCH_SIZE < config.totalFrames; batch++) {
+          const start = batch * BATCH_SIZE + 1;
+          const end = Math.min((batch + 1) * BATCH_SIZE, config.totalFrames);
+          await loadBatch(start, end);
+          console.log(`📦 Feature ${featureNumber}: ${framesLoaded}/${config.totalFrames} frames loaded...`);
+        }
+        
+        console.log(`✅ Feature ${featureNumber}: All ${config.totalFrames} frames loaded!`);
+        animationReady = true;
+      }
+
+      if (!hasFrameSequence) {
+        animationReady = true; // Static image mode - always ready
+      }
+
+      // Frame animation loop with ping-pong support (using requestAnimationFrame)
+      function startFrameAnimation() {
+        if (!hasFrameSequence) return;
+        
+        const loopType = config.pingPong ? "ping-pong" : "normal";
+        console.log(`🎥 Feature ${featureNumber}: Starting frame animation (${loopType} loop)...`);
+        
+        let currentFrame = 0;
+        let direction = 1; // 1 for forward, -1 for reverse
+        const frameDuration = 1000 / config.fps;
+        let lastFrameTime = 0;
+        let isPaused = false;
+
+        // ⚡ PERFORMANCE: Pause animation when not visible
+        const visibilityObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              isPaused = !entry.isIntersecting;
+              if (!isPaused) lastFrameTime = 0; // Reset timing
+            });
+          },
+          { threshold: 0.1 }
+        );
+        visibilityObserver.observe(canvas);
+
+        function animationLoop(timestamp) {
+          requestAnimationFrame(animationLoop);
+          
+          // ⚡ PERFORMANCE: Skip when paused/not visible
+          if (isPaused) return;
+          if (!animationReady || framesLoaded < 20) return;
+          
+          // Initialize lastFrameTime on first run
+          if (lastFrameTime === 0) {
+            lastFrameTime = timestamp;
+          }
+          
+          const elapsed = timestamp - lastFrameTime;
+          
+          if (elapsed >= frameDuration) {
+            const maxFrame = Math.min(framesLoaded, config.totalFrames) - 1;
+            const nextImage = frameImages[currentFrame];
+            
+            if (nextImage && nextImage.complete) {
+              shader.setUniforms({ u_image: nextImage });
+            }
+            
+            if (config.pingPong) {
+              // Ping-pong loop: forward then reverse
+              currentFrame += direction;
+              
+              // Reverse direction at boundaries (use loaded frames only)
+              if (currentFrame >= maxFrame) {
+                currentFrame = maxFrame;
+                direction = -1;
+              } else if (currentFrame <= 0) {
+                currentFrame = 0;
+                direction = 1;
+              }
+            } else {
+              // Normal loop: restart from beginning
+              currentFrame = (currentFrame + 1) % (maxFrame + 1);
+            }
+            
+            // Account for any lag
+            lastFrameTime = timestamp - (elapsed % frameDuration);
+          }
+        }
+
+        requestAnimationFrame(animationLoop);
+      }
+
+      // Return controller for external trigger (Two-Part Animation)
+      const controller = {
+        pixelAnimationStarted: false,
+        sequenceStarted: false,
+        
+        // Called when trigger enters viewport - starts loading + pixel animation
+        startPixelAnimation() {
+          if (this.pixelAnimationStarted) return;
+          this.pixelAnimationStarted = true;
+          
+          // Start loading frames NOW (on-demand when trigger visible)
+          if (hasFrameSequence) {
+            loadAllFrames();
+          }
+          
+          console.log(`🎬 Feature ${featureNumber} Part 1: Starting pixel animation (on first frame)...`);
+          
+          // Ensure first frame is displayed during pixel animation (if already loaded)
+          if (hasFrameSequence && frameImages[0] && frameImages[0].complete) {
+            shader.setUniforms({ u_image: frameImages[0] });
+          }
+          
+          setTimeout(() => {
+            animate(1, 0.1, {
+              duration: 6,
+              ease: [0.36, -0.01, 0.41, 1.01],
+              onUpdate: (u_size) => {
+                shader.setUniforms({ u_size });
+              },
+              onComplete: () => {
+                console.log(`✅ Feature ${featureNumber} Part 1 complete! Starting Part 2...`);
+                // Part 2: Start image sequencing after pixel animation
+                this.startSequence();
+              }
+            });
+          }, delayMs);
+        },
+        
+        // Part 2: Image sequencing (after pixel animation completes)
+        startSequence() {
+          if (this.sequenceStarted) return;
+          this.sequenceStarted = true;
+          
+          if (hasFrameSequence) {
+            startFrameAnimation();
+          }
+        }
+      };
+
+      return controller;
+
+    } catch (error) {
+      console.error(`❌ Feature ${featureNumber}: Initialization error:`, error);
+      return null;
+    }
+  }
+
+  // Wait for DOM and Webflow to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initShaders);
+  } else {
+    // DOM is already ready
+    initShaders();
+  }
+
+  // Also try Webflow's page ready event as backup
+  if (window.Webflow) {
+    window.Webflow.push(initShaders);
+  }
+</script>
+
+
+
+
+
+
+
+
+<style>
+  
+.reveal-text {
+  color: #999;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.reveal-text .word {
+  display: inline-block;        /* keeps letters together inside a word */
+  white-space: nowrap;          /* prevents mid-word breaking */
+}
+
+.reveal-text .space {
+  display: inline;              /* normal spaces */
+}
+
+.reveal-text .letter {
+  display: inline;
+  color: #B2B2B2;              /* initial grey */
+  transition: color 120ms linear;
+  pointer-events: none;
+}
+</style>
+ 
+
+
+
+<script>
+(function () {
+  function clamp(v, a = 0, b = 1) {
+    return Math.max(a, Math.min(b, v));
+  }
+
+  // Split text into words/letters preserving spaces & line breaks
+  function prepare() {
+    document.querySelectorAll('.reveal-text').forEach(el => {
+      if (el.dataset._prepared) return;
+
+      const rawLines = el.textContent.replace(/\r/g, "").split('\n');
+
+      const html = rawLines.map((line, idx) => {
+        const parts = line.split(/(\s+)/);
+        const lineHTML = parts.map(part => {
+          if (part.trim() === "") return `<span class="space">${part}</span>`;
+          const letters = [...part]
+            .map(ch => `<span class="letter unrevealed">${ch}</span>`)
+            .join('');
+          return `<span class="word">${letters}</span>`;
+        }).join('');
+
+        return idx < rawLines.length - 1 ? lineHTML + "<br>" : lineHTML;
+      }).join('');
+
+      el.innerHTML = html;
+      el.dataset._prepared = "1";
+    });
+  }
+
+  function updateOnce() {
+    const triggerLine = window.innerHeight * 0.6; // 80% viewport
+
+    document.querySelectorAll('.reveal-text').forEach(block => {
+      const letters = Array.from(block.querySelectorAll('.letter'));
+      const total = letters.length;
+      if (!total) return;
+
+      const r = block.getBoundingClientRect();
+      const top = r.top;
+      const bottom = r.bottom;
+      const height = r.height;
+
+      let progress = 0;
+
+      // BEFORE START → all grey
+      if (top > triggerLine) {
+        progress = 0;
+      }
+      // AFTER END → all black
+      else if (bottom <= triggerLine) {
+        progress = 1;
+      }
+      // BETWEEN → animate
+      else {
+        progress = clamp((triggerLine - top) / height, 0, 1);
+      }
+
+      const revealIndex = Math.floor(progress * total);
+
+      letters.forEach((letter, i) => {
+        if (i < revealIndex) {
+          letter.style.color = "#000";
+          letter.classList.remove("unrevealed");
+        } else {
+          letter.style.color = "#B2B2B2";
+          letter.classList.add("unrevealed");
+        }
+      });
+    });
+  }
+
+  // rAF scroll handler
+  let ticking = false;
+  function onScroll() {
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(() => {
+        updateOnce();
+        ticking = false;
+      });
+    }
+  }
+
+  function init() {
+    prepare();
+    updateOnce();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+  }
+
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", init)
+    : init();
+})();
+</script>
+
+
+
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const components = document.querySelectorAll('[blog-slider="component"]');
+  const DESKTOP_BREAKPOINT = 992;
+
+  components.forEach(component => {
+    const parent   = component.querySelector('[blog-slider="parent"]');
+    const children = [...component.querySelectorAll('[blog-slider="child"]')]; // .blog_item
+    const nextBtn  = component.querySelector('[blog-slider="next"]');
+    const prevBtn  = component.querySelector('[blog-slider="previous"]');
+
+    let currentIndex = 0;
+
+    /* ------------------------------------
+       SLIDE (flex + gap + overflow visible)
+    ------------------------------------- */
+    function slideToIndex() {
+      if (!children.length) return;
+
+      const childWidth = children[0].offsetWidth;
+      const gap = parseFloat(getComputedStyle(parent).gap) || 0;
+      const offset = currentIndex * (childWidth + gap);
+
+      parent.style.transition = "transform 400ms ease";
+      parent.style.transform = `translateX(-${offset}px)`;
+
+      updateButtons();
+      updateActiveState();
+    }
+
+    /* ------------------------------------
+       ACTIVE STATE (DESKTOP ONLY)
+    ------------------------------------- */
+    function updateActiveState() {
+      if (window.innerWidth < DESKTOP_BREAKPOINT) {
+        // Ensure clean state on tablet & mobile
+        children.forEach(child => {
+          child.classList.remove("is-active");
+          child.querySelector(".blog_content-bottom")?.classList.remove("is-active");
+        });
+        return;
+      }
+
+      children.forEach((child, index) => {
+        const bottom = child.querySelector(".blog_content-bottom");
+
+        if (index === currentIndex) {
+          child.classList.add("is-active");
+          bottom?.classList.add("is-active");
+        } else {
+          child.classList.remove("is-active");
+          bottom?.classList.remove("is-active");
+        }
+      });
+    }
+
+    /* ------------------------------------
+       DISABLED BUTTON STATE
+    ------------------------------------- */
+    function updateButtons() {
+      prevBtn?.classList.toggle("is-disabled", currentIndex === 0);
+      nextBtn?.classList.toggle("is-disabled", currentIndex === children.length - 1);
+    }
+
+    /* ------------------------------------
+       BUTTON HANDLERS
+    ------------------------------------- */
+    nextBtn?.addEventListener("click", () => {
+      if (currentIndex < children.length - 1) {
+        currentIndex++;
+        slideToIndex();
+      }
+    });
+
+    prevBtn?.addEventListener("click", () => {
+      if (currentIndex > 0) {
+        currentIndex--;
+        slideToIndex();
+      }
+    });
+
+    /* ------------------------------------
+       HANDLE RESIZE (CRITICAL)
+    ------------------------------------- */
+    window.addEventListener("resize", () => {
+      updateActiveState();
+    });
+
+    /* ------------------------------------
+       INIT
+    ------------------------------------- */
+    parent.style.willChange = "transform";
+    slideToIndex();
+  });
+});
+</script>
+
+
+
+
