@@ -1,11 +1,16 @@
 {
-    "headers": [
-      {
-        "source": "/frames/(.*)",
-        "headers": [
-          { "key": "Access-Control-Allow-Origin", "value": "*" },
-          { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" }
-        ]
-      }
-    ]
-  }
+  "headers": [
+    {
+      "source": "/(.*)\\.(webp|png|jpg|jpeg|gif|svg|avif)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "*" },
+
+        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" },
+
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}
