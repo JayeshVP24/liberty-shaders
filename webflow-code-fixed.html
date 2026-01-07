@@ -1,4 +1,5 @@
 <script type="module">
+  // IMPORTANT: The shader library doesn't support ImageBitmap objects - it only accepts HTMLImageElement. 
   import {
     ShaderMount,
     HalftoneDotsGrids,
@@ -81,6 +82,7 @@
     /* =====================================================
        FEATURE SHADERS (feature="1", feature="2", feature="3")
        Uses external triggers (feature-trigger="1", etc.) for scroll detection
+       ⚠️ SIMPLE & RELIABLE: Triggers once and runs (like old working code)
        ⚠️ Supports MULTIPLE elements per feature (e.g., desktop + mobile)
        ⚠️ Frame loading is ON-DEMAND (starts when trigger enters viewport)
     ===================================================== */
@@ -116,7 +118,8 @@
       }
     }
     
-    // Set up external trigger observers
+    
+    // Set up external trigger observers (simple, like old code - trigger once and run)
     const triggerObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -130,16 +133,16 @@
             return;
           }
 
-          // ⚠️ ANDROID FIX: Only start shaders for VISIBLE elements (skip hidden desktop/mobile)
-          let startedCount = 0;
+          console.log(`🎯 Feature ${featureNum}: Trigger activated! Starting ${controllers.length} shader(s)...`);
+          
+          // Start ALL controllers for this feature (desktop + mobile) and let them run
           controllers.forEach(controller => {
             if (controller.isVisible()) {
               controller.startPixelAnimation();
-              startedCount++;
             }
           });
           
-          console.log(`🎯 Feature ${featureNum}: Trigger activated! Started ${startedCount}/${controllers.length} visible shader(s)`);
+          // Unobserve after triggering (like old code - no pause/resume)
           triggerObserver.unobserve(entry.target);
         });
       },
@@ -190,7 +193,7 @@
     img.style.pointerEvents = "none";
 
     // ⚡ Load ALL frames before starting (for two-part animation)
-    const BATCH_SIZE = 30;
+    const BATCH_SIZE = 20; // ⚡ SMALLER batches for better performance
     
     console.log("⏳ Loading ALL hero frames before animation starts...");
     
@@ -226,6 +229,11 @@
         const end = Math.min((batch + 1) * BATCH_SIZE, TOTAL_FRAMES);
         await loadFrameBatch(start, end);
         console.log(`📦 Hero: ${framesLoaded}/${TOTAL_FRAMES} frames loaded...`);
+        
+        // ⚡ PERFORMANCE: Add small delay between batches to prevent blocking
+        if (batch < Math.ceil(TOTAL_FRAMES / BATCH_SIZE) - 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
       }
       
       console.log(`✅ All ${TOTAL_FRAMES} hero frames loaded!`);
@@ -343,7 +351,7 @@
         this.pixelAnimationStarted = true;
         
         const ANIMATION_DURATION = 6; // seconds
-        const SEQUENCE_START_AT = 3;  // start sequencing at 3rd second (3s overlap)
+        const SEQUENCE_START_AT = 2.5;  // start sequencing at 2.5th second (3.5s overlap)
         
         console.log("🎬 Hero Part 1: Starting pixel animation (on first frame)...");
         
@@ -391,7 +399,7 @@
       let loopStarted = false;
       let isPaused = false;
 
-      // ⚡ PERFORMANCE: Pause animation when hero is not visible
+      // ⚡ PERFORMANCE: Pause animation when hero is not visible (more aggressive)
       const visibilityObserver = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
@@ -404,19 +412,29 @@
             }
           });
         },
-        { threshold: 0.1 }
+        { 
+          threshold: 0.2, // Only run when 20% visible
+          rootMargin: "-10% 0px -10% 0px" // More conservative margin
+        }
       );
       visibilityObserver.observe(canvas);
 
-      function animationLoop(timestamp) {
-        // Request next frame immediately for smooth loop
-        requestAnimationFrame(animationLoop);
-        
-        // ⚡ PERFORMANCE: Skip updates when paused/not visible
+      // Simple setInterval loop like old code
+      const interval = 1000 / FPS;
+      let animationStarted = false;
+
+      const animationLoop = setInterval(() => {
+        // Skip updates when paused/not visible
         if (isPaused) return;
         
         // Wait for shader to be ready
-        if (!shader || !shaderReady) return;
+        if (!shader || !shaderReady) {
+          if (!animationStarted) {
+            console.log("⏳ Waiting for shader to initialize...");
+            animationStarted = true;
+          }
+          return;
+        }
 
         // Wait for minimum frames to be loaded
         if (framesLoaded < 30) return;
@@ -424,30 +442,18 @@
         if (!loopStarted) {
           console.log("🎬 Video animation started!");
           loopStarted = true;
-          lastFrameTime = timestamp;
         }
 
-        // Time-based frame advancement (smoother than setInterval)
-        const elapsed = timestamp - lastFrameTime;
+        // Only play frames that are loaded
+        const maxFrame = Math.min(framesLoaded, TOTAL_FRAMES) - 1;
+        const nextImage = frameImages[currentFrame];
         
-        if (elapsed >= frameDuration) {
-          // Only play frames that are loaded
-          const maxFrame = Math.min(framesLoaded, TOTAL_FRAMES) - 1;
-          const nextImage = frameImages[currentFrame];
-          
-          if (nextImage && nextImage.complete) {
-            shader.setUniforms({ u_image: nextImage });
-          }
-
-          currentFrame = (currentFrame + 1) % (maxFrame + 1);
-          
-          // Account for any lag to maintain consistent speed
-          lastFrameTime = timestamp - (elapsed % frameDuration);
+        if (nextImage && nextImage.complete) {
+          shader.setUniforms({ u_image: nextImage });
         }
-      }
 
-      // Start the animation loop
-      requestAnimationFrame(animationLoop);
+        currentFrame = (currentFrame + 1) % (maxFrame + 1);
+      }, interval);
     }
   }
 
@@ -616,109 +622,76 @@
       if (loadingStarted || !hasFrameSequence) return;
       loadingStarted = true;
       
-      const BATCH_SIZE = 20;
-      
-      async function loadBatch(start, end) {
-        const promises = [];
-        for (let i = start; i <= end && i <= config.totalFrames; i++) {
-          const frameImg = new Image();
-          frameImg.crossOrigin = "anonymous";
-          const paddedIndex = String(i).padStart(4, "0");
-          
-          const promise = new Promise((resolve) => {
-            frameImg.onload = () => { framesLoaded++; resolve(); };
-            frameImg.onerror = () => resolve();
-          });
-          
-          frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
-          frameImages[i - 1] = frameImg;
-          promises.push(promise);
-        }
-        await Promise.all(promises);
-      }
-
       console.log(`⏳ Feature ${featureNumber}: Loading ${config.totalFrames} frames...`);
       
-      for (let batch = 0; batch * BATCH_SIZE < config.totalFrames; batch++) {
-        const start = batch * BATCH_SIZE + 1;
-        const end = Math.min((batch + 1) * BATCH_SIZE, config.totalFrames);
-        await loadBatch(start, end);
-        console.log(`📦 Feature ${featureNumber}: ${framesLoaded}/${config.totalFrames} frames loaded...`);
+      // Simple frame loading like old code
+      for (let i = 1; i <= config.totalFrames; i++) {
+        const frameImg = new Image();
+        frameImg.crossOrigin = "anonymous";
+        const paddedIndex = String(i).padStart(4, "0");
+        
+        frameImg.onload = () => {
+          framesLoaded++;
+          if (framesLoaded === config.totalFrames) {
+            console.log(`✅ Feature ${featureNumber}: All frames loaded!`);
+            animationReady = true;
+          } else if (framesLoaded % 25 === 0) {
+            console.log(`📦 Feature ${featureNumber}: Loaded ${framesLoaded}/${config.totalFrames} frames...`);
+          }
+        };
+
+        frameImg.onerror = () => {
+          console.error(`❌ Feature ${featureNumber}: Failed to load frame ${i}`);
+        };
+        
+        frameImg.src = `${config.framesDir}/frame_${paddedIndex}.webp`;
+        frameImages[i - 1] = frameImg;
       }
-      
-      console.log(`✅ Feature ${featureNumber}: All ${config.totalFrames} frames loaded!`);
-      animationReady = true;
     }
 
-    /* ---------- FRAME ANIMATION LOOP ---------- */
+    /* ---------- FRAME ANIMATION LOOP (Simple setInterval like old code) ---------- */
     function startFrameAnimation() {
-      if (!hasFrameSequence || !shader) return;
+      if (!hasFrameSequence || !shader) {
+        console.log(`⚠️ Feature ${featureNumber}: Cannot start frame animation - hasFrameSequence: ${hasFrameSequence}, shader: ${!!shader}`);
+        return;
+      }
       
       const loopType = config.pingPong ? "ping-pong" : "normal";
-      console.log(`🎥 Feature ${featureNumber}: Starting frame animation (${loopType} loop)...`);
+      console.log(`🎥 Feature ${featureNumber}: Starting frame animation (${loopType} loop) - framesLoaded: ${framesLoaded}/${config.totalFrames}, animationReady: ${animationReady}`);
       
       let currentFrame = 0;
       let direction = 1;
-      const frameDuration = 1000 / config.fps;
-      let lastFrameTime = 0;
-      let isPaused = false;
+      const interval = 1000 / config.fps;
 
-      const visibilityObserver = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            isPaused = !entry.isIntersecting;
-            if (!isPaused) lastFrameTime = 0;
-          });
-        },
-        { threshold: 0.1 }
-      );
-      visibilityObserver.observe(canvas);
-
-      function animationLoop(timestamp) {
-        requestAnimationFrame(animationLoop);
+      setInterval(() => {
+        if (!animationReady || frameImages.length < config.totalFrames || !shader) return;
         
-        if (isPaused || !shader) return;
-        if (!animationReady || framesLoaded < 20) return;
-        
-        if (lastFrameTime === 0) {
-          lastFrameTime = timestamp;
+        const nextImage = frameImages[currentFrame];
+        if (nextImage && nextImage.complete) {
+          shader.setUniforms({ u_image: nextImage });
         }
         
-        const elapsed = timestamp - lastFrameTime;
-        
-        if (elapsed >= frameDuration) {
-          const maxFrame = Math.min(framesLoaded, config.totalFrames) - 1;
-          const nextImage = frameImages[currentFrame];
+        if (config.pingPong) {
+          // Ping-pong loop: forward then reverse
+          currentFrame += direction;
           
-          if (nextImage && nextImage.complete) {
-            shader.setUniforms({ u_image: nextImage });
+          // Reverse direction at boundaries
+          if (currentFrame >= config.totalFrames - 1) {
+            direction = -1; // Start going backward
+          } else if (currentFrame <= 0) {
+            direction = 1; // Start going forward
           }
-          
-          if (config.pingPong) {
-            currentFrame += direction;
-            if (currentFrame >= maxFrame) {
-              currentFrame = maxFrame;
-              direction = -1;
-            } else if (currentFrame <= 0) {
-              currentFrame = 0;
-              direction = 1;
-            }
-          } else {
-            currentFrame = (currentFrame + 1) % (maxFrame + 1);
-          }
-          
-          lastFrameTime = timestamp - (elapsed % frameDuration);
+        } else {
+          // Normal loop: restart from beginning
+          currentFrame = (currentFrame + 1) % config.totalFrames;
         }
-      }
-
-      requestAnimationFrame(animationLoop);
+      }, interval);
     }
 
-    // Return controller for external trigger (Two-Part Animation)
+    // Return controller for external trigger (Simple like old code)
     // ⚠️ ANDROID FIX: Shader created HERE, not during init
     const controller = {
-      pixelAnimationStarted: false,
-      sequenceStarted: false,
+      started: false,
       
       // Check if this element is currently visible (not hidden by CSS)
       isVisible() {
@@ -726,7 +699,7 @@
         const rect = canvas.getBoundingClientRect();
         const style = window.getComputedStyle(canvas);
         
-        // Element is visible if it has dimensions and isn't hidden
+        // Element is visible if it has dimensions and isn't explicitly hidden
         const hasSize = rect.width > 0 && rect.height > 0;
         const isDisplayed = style.display !== 'none';
         const isVisible = style.visibility !== 'hidden';
@@ -735,16 +708,12 @@
         return hasSize && isDisplayed && isVisible && hasOpacity;
       },
       
-      // Called when trigger enters viewport - creates shader + starts animation
-      // ⚠️ OVERLAP: Image sequencing starts at 4th second (2s before animation ends)
+      // Simple start method like old code - creates shader and starts animation
       async startPixelAnimation() {
-        if (this.pixelAnimationStarted) return;
-        this.pixelAnimationStarted = true;
+        if (this.started) return;
+        this.started = true;
         
-        const ANIMATION_DURATION = 6; // seconds
-        const SEQUENCE_START_AT = 3;  // start sequencing at 3rd second (3s overlap)
-        
-        console.log(`🎬 Feature ${featureNumber}: Trigger activated!`);
+        console.log(`🎬 Feature ${featureNumber}: Animation triggered!`);
         
         // ⚠️ CREATE SHADER NOW (lazy initialization for Android)
         const shaderInstance = await createShader();
@@ -760,20 +729,20 @@
           animationReady = true;
         }
         
-        console.log(`🎬 Feature ${featureNumber} Part 1: Starting pixel animation (on first frame)...`);
-        
-        // Ensure first frame is displayed (if already loaded)
-        if (hasFrameSequence && frameImages[0] && frameImages[0].complete) {
-          shader.setUniforms({ u_image: frameImages[0] });
-        }
-        
+        // Start pixel animation with sequence overlap
         setTimeout(() => {
-          // Start image sequencing partway through the animation (at 4th second)
+          const ANIMATION_DURATION = 6; // seconds
+          const SEQUENCE_START_AT = 2.5;  // start sequencing at 2.5th second
+          
+          // Start image sequencing partway through the animation
           setTimeout(() => {
-            console.log(`🎥 Feature ${featureNumber}: Starting image sequence (overlapping with pixel animation)...`);
-            this.startSequence();
+            console.log(`🎥 Feature ${featureNumber}: Starting image sequence...`);
+            if (hasFrameSequence) {
+              startFrameAnimation();
+            }
           }, SEQUENCE_START_AT * 1000);
           
+          // Start pixel animation
           animate(1, 0.1, {
             duration: ANIMATION_DURATION,
             ease: [0.36, -0.01, 0.41, 1.01],
@@ -781,20 +750,10 @@
               if (shader) shader.setUniforms({ u_size });
             },
             onComplete: () => {
-              console.log(`✅ Feature ${featureNumber} pixel animation complete!`);
+              console.log(`✅ Feature ${featureNumber}: Intro animation complete`);
             }
           });
         }, delayMs);
-      },
-      
-      // Part 2: Image sequencing (after pixel animation completes)
-      startSequence() {
-        if (this.sequenceStarted) return;
-        this.sequenceStarted = true;
-        
-        if (hasFrameSequence) {
-          startFrameAnimation();
-        }
       }
     };
 
@@ -1048,7 +1007,4 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 </script>
-
-
-
 
