@@ -337,9 +337,13 @@
       sequenceStarted: false,
       
       // Part 1: Pixel animation on FIRST frame only
+      // ⚠️ OVERLAP: Image sequencing starts at 4th second (2s before animation ends)
       startPixelAnimation() {
         if (this.pixelAnimationStarted) return;
         this.pixelAnimationStarted = true;
+        
+        const ANIMATION_DURATION = 6; // seconds
+        const SEQUENCE_START_AT = 3;  // start sequencing at 3rd second (3s overlap)
         
         console.log("🎬 Hero Part 1: Starting pixel animation (on first frame)...");
         
@@ -349,16 +353,20 @@
         }
         
         setTimeout(() => {
+          // Start image sequencing partway through the animation (at 4th second)
+          setTimeout(() => {
+            console.log("🎥 Hero: Starting image sequence (overlapping with pixel animation)...");
+            this.startSequence();
+          }, SEQUENCE_START_AT * 1000);
+          
           animate(1, 0.1, {
-            duration: 6,
+            duration: ANIMATION_DURATION,
             ease: [0.36, -0.01, 0.41, 1.01],
             onUpdate: (u_size) => {
               shader.setUniforms({ u_size });
             },
             onComplete: () => {
-              console.log("✅ Hero Part 1 complete! Starting Part 2...");
-              // Part 2: Start image sequencing after pixel animation
-              this.startSequence();
+              console.log("✅ Hero pixel animation complete!");
             }
           });
         }, delayMs);
@@ -728,9 +736,13 @@
       },
       
       // Called when trigger enters viewport - creates shader + starts animation
+      // ⚠️ OVERLAP: Image sequencing starts at 4th second (2s before animation ends)
       async startPixelAnimation() {
         if (this.pixelAnimationStarted) return;
         this.pixelAnimationStarted = true;
+        
+        const ANIMATION_DURATION = 6; // seconds
+        const SEQUENCE_START_AT = 3;  // start sequencing at 3rd second (3s overlap)
         
         console.log(`🎬 Feature ${featureNumber}: Trigger activated!`);
         
@@ -756,15 +768,20 @@
         }
         
         setTimeout(() => {
+          // Start image sequencing partway through the animation (at 4th second)
+          setTimeout(() => {
+            console.log(`🎥 Feature ${featureNumber}: Starting image sequence (overlapping with pixel animation)...`);
+            this.startSequence();
+          }, SEQUENCE_START_AT * 1000);
+          
           animate(1, 0.1, {
-            duration: 6,
+            duration: ANIMATION_DURATION,
             ease: [0.36, -0.01, 0.41, 1.01],
             onUpdate: (u_size) => {
               if (shader) shader.setUniforms({ u_size });
             },
             onComplete: () => {
-              console.log(`✅ Feature ${featureNumber} Part 1 complete! Starting Part 2...`);
-              this.startSequence();
+              console.log(`✅ Feature ${featureNumber} pixel animation complete!`);
             }
           });
         }, delayMs);
