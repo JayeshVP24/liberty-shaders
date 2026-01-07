@@ -13,6 +13,31 @@
   import { animate } from "https://esm.sh/motion@12.23.26";
 
   /* =====================================================
+     MOBILE DETECTION & OPTIMIZATION
+  ===================================================== */
+  function isMobile() {
+    return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           window.innerWidth <= 768;
+  }
+
+  function getFramesDirectory(baseDir, isMobileDevice) {
+    return isMobileDevice ? `${baseDir}/mobile` : baseDir;
+  }
+
+  function getFrameRate(isMobileDevice) {
+    return isMobileDevice ? 24 : 30; // 24fps for mobile, 30fps for desktop
+  }
+
+  function optimizeCanvasForMobile(canvas) {
+    if (isMobile() && canvas) {
+      // Resize canvas to 70% on mobile for better performance
+      canvas.style.transform = 'scale(0.7)';
+      canvas.style.transformOrigin = 'center';
+      console.log(`📱 Mobile: Canvas resized to 70%`);
+    }
+  }
+
+  /* =====================================================
      GLOBAL LOADER CONTROL
   ===================================================== */
   const LOADER_MIN_TIME = 3000; // 3 seconds minimum loader display
@@ -165,10 +190,13 @@
   ===================================================== */
   async function initHeroVideoShader(canvas, onFramesLoaded) {
     const TOTAL_FRAMES = 227;
-    const FPS = 30;
+    const isMobileDevice = isMobile();
+    const FPS = getFrameRate(isMobileDevice);
     
-    // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL
-    const FRAMES_DIR = "https://liberty-shaders.vercel.app/frames";
+    // ⚠️ UPDATE THIS PATH TO YOUR WEBFLOW ASSET URL - mobile optimized
+    const FRAMES_DIR = getFramesDirectory("https://liberty-shaders.vercel.app/frames", isMobileDevice);
+    
+    console.log(`🎬 Hero: ${isMobileDevice ? 'Mobile' : 'Desktop'} mode - ${FPS}fps, frames from: ${FRAMES_DIR}`);
     
     const frameImages = [];
     let framesLoaded = 0;
@@ -184,6 +212,9 @@
 
     console.log("✅ Hero shader container and image found");
     console.log("📸 Image source:", img.src);
+
+    // Optimize canvas for mobile
+    optimizeCanvasForMobile(canvas);
 
     // Get delay from custom attribute (in milliseconds)
     const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
@@ -463,33 +494,37 @@
         to avoid "Too many WebGL contexts" error
   ===================================================== */
   function initFeatureShader(canvas, featureNumber) {
-    // ⚠️ CONFIGURE FRAME DIRECTORIES FOR EACH FEATURE HERE
+    const isMobileDevice = isMobile();
+    
+    // ⚠️ CONFIGURE FRAME DIRECTORIES FOR EACH FEATURE HERE - Mobile optimized
     const FEATURE_CONFIGS = {
       1: {
-        // ✅ CONFIGURED: 158 frames from updated feature1.mp4 (720px width, quality 25)
+        // ✅ CONFIGURED: 158 frames - Mobile optimized (24fps, 50% scale)
         // Ping-pong loop: plays forward then reverse
-        framesDir: "https://liberty-shaders.vercel.app/feature_frames_1",
+        framesDir: getFramesDirectory("https://liberty-shaders.vercel.app/feature_frames_1", isMobileDevice),
         totalFrames: 158,
-        fps: 30,
+        fps: getFrameRate(isMobileDevice),
         pingPong: true  // Enable forward-reverse looping
       },
       2: {
-        // ✅ CONFIGURED: 103 frames from updated feature2.mp4 (720px width, quality 25)
+        // ✅ CONFIGURED: 103 frames - Mobile optimized (24fps, 50% scale)
         // Ping-pong loop: plays forward then reverse
-        framesDir: "https://liberty-shaders.vercel.app/feature_frames_2",
+        framesDir: getFramesDirectory("https://liberty-shaders.vercel.app/feature_frames_2", isMobileDevice),
         totalFrames: 103,
-        fps: 30,
+        fps: getFrameRate(isMobileDevice),
         pingPong: true  // Enable forward-reverse looping
       },
       3: {
-        // ✅ CONFIGURED: 150 frames from updated feature3.mp4 (960px width, quality 50)
+        // ✅ CONFIGURED: 150 frames - Mobile optimized (24fps, 50% scale)
         // Ping-pong loop: plays forward then reverse
-        framesDir: "https://liberty-shaders.vercel.app/feature_frames_3",
+        framesDir: getFramesDirectory("https://liberty-shaders.vercel.app/feature_frames_3", isMobileDevice),
         totalFrames: 150,
-        fps: 30,
+        fps: getFrameRate(isMobileDevice),
         pingPong: true  // Enable forward-reverse looping
       }
     };
+    
+    console.log(`🎨 Feature ${featureNumber}: ${isMobileDevice ? 'Mobile' : 'Desktop'} mode - ${FEATURE_CONFIGS[featureNumber].fps}fps`);
 
     const config = FEATURE_CONFIGS[featureNumber];
     const img = canvas.querySelector("img");
@@ -500,6 +535,9 @@
     }
 
     console.log(`✅ Feature ${featureNumber}: Container and image found (shader deferred until trigger)`);
+    
+    // Optimize canvas for mobile
+    optimizeCanvasForMobile(canvas);
 
     // Get delay from custom attribute (in milliseconds)
     const delayMs = parseInt(canvas.getAttribute('shader-delay')) || 0;
